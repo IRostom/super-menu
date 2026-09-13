@@ -366,6 +366,11 @@ function displayRow(items, itemOrder, checkedResults, entry, detail, score, sect
     path: pathFor(items, entry.id),
     childCount: (entry.kind === "menu" || entry.kind === "link") ? childCount(items, itemOrder, target) : 0,
     action: entry.action || "",
+    // Answer rows carry these two; ordinary rows must still declare them.
+    // ListModel fixes its roles from the first row appended and the delegate
+    // declares them required, so every builder has to emit the same key set.
+    actionArgv: "",
+    copyText: "",
     provider: entry.provider || "",
     score: score || 0,
     section: section || ""

@@ -2,14 +2,13 @@
   "schemaVersion": 1,
   "id": "irostom.menu",
   "name": "My Omarchy menu",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "author": "Omarchy",
-  "description": "Quickshell-powered Omarchy command menu",
+  "description": "Omarchy command menu with a query-plugin layer: calculator, unit and currency conversion, and user-written JS or command plugins",
   "kinds": [
     "menu",
     "bar-widget"
   ],
-  "keepLoaded": true,
   "entryPoints": {
     "menu": "Menu.qml",
     "barWidget": "BarWidget.qml"
@@ -22,5 +21,6 @@
   },
   "omarchy": {
     "clonedFrom": "omarchy.menu"
-  }
+  },
+  "keepLoaded": true
 }

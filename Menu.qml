@@ -5,6 +5,8 @@ import QtQuick
 import qs.Commons
 import qs.Ui
 import "MenuModel.js" as MenuModel
+import "QueryPlugins.js" as QueryPlugins
+import "QueryBuiltins.js" as QueryBuiltins
 
 Item {
   id: root
@@ -38,7 +40,36 @@ Item {
   function refresh() {
     defaultMenuFile.reload()
     userMenuFile.reload()
+    root.loadAnswerPlugins()
     return "ok"
+  }
+
+  // Reports what the query-plugin layer thinks of a query, so the gate and
+  // the plugin list can be checked without opening the menu:
+  //   omarchy-shell shell call irostom.menu selftest '{"query":"2+2"}'
+  function selftest(payloadJson) {
+    var payload = ({})
+    try { payload = JSON.parse(payloadJson || "{}") } catch (e) { payload = ({}) }
+
+    var ids = []
+    for (var i = 0; i < root.answerPlugins.length; i++)
+      ids.push(root.answerPlugins[i].id + (root.answerPlugins[i].disabled ? "(off)" : ""))
+
+    var query = String(payload.query || "")
+    var matched = []
+    var matches = QueryPlugins.matchAll(root.answerPlugins, query)
+    for (var j = 0; j < matches.length; j++)
+      matched.push(matches[j].plugin.id + ":" + matches[j].match.text + (matches[j].match.explicit ? ":explicit" : ""))
+
+    return JSON.stringify({
+      dynamicJs: QueryPlugins.dynamicJsAvailable(),
+      hostAppLibrary: !!(root.shell && root.shell.appLibrary),
+      appCount: root.appLibrary ? root.appLibrary.sortedEntries("").length : -1,
+      pluginDir: root.pluginDir,
+      plugins: ids,
+      query: query,
+      matches: matched
+    })
   }
 
   function ping() { return "ok" }
@@ -75,9 +106,48 @@ Item {
   property var providerQueue: []
   property int providerRevision: 0
 
+  // --- query plugins -------------------------------------------------
+  // Answer rows are computed from the typed text rather than matched against
+  // the menu tree, and are pinned above the search results. See
+  // QueryPlugins.js for the gate that decides when a query has an answer.
+  property var answerPlugins: []
+  property var answerRows: []
+  property int answerRevision: 0
+  property var answerQueue: []
+  property bool answerFocusable: false
+  // Distinguishes "the cursor is at 0 because the user is typing" from "the
+  // user deliberately moved it". cursorActive cannot: setFilter() sets it true
+  // on every keystroke.
+  property bool cursorMoved: false
+  property int answerRowHeight: Math.max(Style.space(66), Style.font.display + Style.font.bodySmall + Style.spacing.rowPaddingX * 2)
+  readonly property string userPluginDir: (Quickshell.env("XDG_CONFIG_HOME") || (Quickshell.env("HOME") + "/.config")) + "/omarchy/menu-plugins"
+  readonly property string pluginDir: {
+    var url = String(Qt.resolvedUrl("."))
+    if (url.indexOf("file://") === 0) url = decodeURIComponent(url.substring(7))
+    return url.replace(/\/$/, "")
+  }
+
+  Component.onCompleted: root.loadAnswerPlugins()
+
+
   // Shared application engine (entries, hidden filters, icons, launch,
   // removal), owned by the shell and also used by the standalone launcher.
-  readonly property var appLibrary: root.shell ? root.shell.appLibrary : null
+  // The host hands a scoped appLibrary to any plugin declaring kind "menu",
+  // but it does not survive for a cloned menu: shell.qml's prunePluginApis()
+  // destroys a third-party plugin's scoped APIs whenever isEnabled() reads
+  // false, which it transiently does while shell.json is being re-applied,
+  // and nothing ever re-injects them. isEnabled() short-circuits to true for
+  // first-party plugins, so only clones are affected -- the built-in menu's
+  // Apps list works while an identical clone's is empty.
+  //
+  // So own it instead of borrowing it, the same way irostom.logimouse owns
+  // its Solaar service rather than going through the shell's service bridge.
+  // AppLibrary.qml and AppSearch.js are verbatim copies (see upstream/); they
+  // reach everything they need through $OMARCHY_PATH and the omarchy-shell
+  // CLI, so they run unmodified outside the shell tree.
+  readonly property var appLibrary: (root.shell && root.shell.appLibrary) ? root.shell.appLibrary : ownAppLibrary
+
+  AppLibrary { id: ownAppLibrary }
   property bool deleteConfirmOpen: false
   property var deleteTarget: null
   onOpenedChanged: if (!opened) { deleteConfirmOpen = false; deleteTarget = null }
@@ -143,7 +213,8 @@ Item {
 
   // Menu rows only surface their detail while a search is narrowing them;
   // dmenu rows carry caller-supplied subtext that must always be visible.
-  function rowHeightForDetail(detail) {
+  function rowHeightForDetail(detail, kind) {
+    if (kind === "answer") return root.answerRowHeight
     return (root.filterText || root.dmenuActive) && detail ? root.detailRowHeight : root.baseRowHeight
   }
 
@@ -189,7 +260,9 @@ Item {
       var row = displayModel.get(i)
       if (i > 0) total += root.rowSpacing
       if (row.section === "drilldown" && previousSection !== "drilldown") total += root.dividerHeight
-      total += root.rowHeightForDetail(row.detail)
+      // The rule under the answers, mirroring the section delegate below.
+      else if (previousSection === "answer" && row.section !== "answer") total += root.dividerHeight
+      total += root.rowHeightForDetail(row.detail, row.kind)
       previousSection = row.section
       totals.push(total)
     }
@@ -208,7 +281,7 @@ Item {
     var total = 0
     for (var i = 0; i < displayModel.count; i++) {
       if (i > 0) total += root.rowSpacing
-      total += root.rowHeightForDetail(displayModel.get(i).detail)
+      total += root.rowHeightForDetail(displayModel.get(i).detail, displayModel.get(i).kind)
       totals.push(total)
     }
 
@@ -564,6 +637,12 @@ Item {
       return
     }
 
+    // Answers are prepended, so an arriving answer shifts every index below
+    // it. Remember the row the cursor is on by id and put it back by id.
+    var keepId = ""
+    if (root.cursorMoved && root.selectedIndex >= 0 && root.selectedIndex < displayModel.count)
+      keepId = displayModel.get(root.selectedIndex).itemId
+
     displayModel.clear()
 
     if (!root.rowsLoaded) return
@@ -627,10 +706,21 @@ Item {
       }
     }
 
+    if (query && root.answerRows.length > 0) rows = root.answerRows.concat(rows)
+
     for (var k = 0; k < rows.length; k++) displayModel.append(rows[k])
     layoutSerial += 1
 
+    var restored = -1
+    if (keepId) {
+      for (var r = 0; r < displayModel.count; r++) {
+        if (displayModel.get(r).itemId === keepId) { restored = r; break }
+      }
+    }
+
     if (displayModel.count === 0) selectedIndex = 0
+    else if (restored >= 0) selectedIndex = restored
+    else if (!root.cursorMoved) selectedIndex = root.firstSelectableIndex()
     else if (selectedIndex >= displayModel.count) selectedIndex = displayModel.count - 1
     else if (selectedIndex < 0) selectedIndex = 0
 
@@ -664,6 +754,7 @@ Item {
   function select(delta) {
     if (displayModel.count === 0) return
 
+    root.cursorMoved = true
     root.disarmPointer()
     if (!cursorActive) {
       cursorActive = true
@@ -679,8 +770,12 @@ Item {
     root.filterText = nextFilter
     root.selectedIndex = 0
     root.cursorActive = root.mode !== "input"
+    root.cursorMoved = false
     root.disarmPointer()
     if (!root.dmenuActive && root.filterText.trim()) root.loadProvidersForSearch()
+    // Before rebuildDisplay(), so a query that no longer has an answer drops
+    // its stale row in the same frame rather than showing a wrong one.
+    root.scheduleAnswers()
     root.rebuildDisplay()
   }
 
@@ -730,6 +825,10 @@ Item {
     if (index < 0 || index >= displayModel.count) return
 
     var row = displayModel.get(index)
+    if (row.kind === "answer") {
+      root.applyAnswer(row)
+      return
+    }
     if (row.kind === "menu" || row.kind === "link") {
       root.setActiveMenu(row.target || row.itemId, true, fromPointer)
     } else if (row.kind === "app") {
@@ -788,6 +887,7 @@ Item {
 
   function cancel() {
     if (root.dmenuActive) root.finishRequest(null)
+    root.clearAnswers()
     opened = false
     filterText = ""
   }
@@ -803,6 +903,7 @@ Item {
     filterText = ""
     selectedIndex = 0
     cursorActive = true
+    root.clearAnswers()
     root.disarmPointer()
     root.evaluateGuards()
     opened = true
@@ -831,6 +932,7 @@ Item {
     filterText = ""
     selectedIndex = 0
     cursorActive = mode !== "input"
+    root.clearAnswers()
     root.disarmPointer()
     opened = true
     rebuildDisplay()
@@ -875,6 +977,7 @@ Item {
   function selectFromPointer(index, item, mouse) {
     if (!pointerGate.moved(item, mouse)) return
     root.cursorActive = true
+    root.cursorMoved = true
     root.selectedIndex = index
   }
 
@@ -893,6 +996,312 @@ Item {
         if (root.filterText.trim()) root.loadProvidersForSearch()
       }
       root.startNextProvider()
+    }
+  }
+
+  // ------------------------------------------------------------------
+  // Query plugins
+  //
+  // A query plugin answers the typed text instead of matching against it.
+  // Two kinds: "js" runs in this engine and is synchronous, "command" runs a
+  // process and is debounced, cancellable and killable.
+  //
+  // Three things have to be true before a stale answer can be shown, so each
+  // is checked independently: the answer must belong to the current query
+  // (revision), the menu must still be open, and it must not be a dmenu.
+
+  function loadAnswerPlugins() {
+    var list = []
+    var builtins = QueryBuiltins.descriptors(root.pluginDir)
+
+    for (var i = 0; i < builtins.length; i++) {
+      var plugin = QueryPlugins.normalizeDescriptor(builtins[i], "builtin")
+      if (plugin) list.push(plugin)
+    }
+
+    root.answerPlugins = list
+    // User plugins arrive asynchronously and are merged on top.
+    pluginScanProc.running = true
+  }
+
+  function mergeUserAnswerPlugins(rawJson) {
+    if (!QueryPlugins.dynamicJsAvailable()) {
+      console.warn("irostom.menu: this QML engine will not build functions at runtime; user .js query plugins are disabled")
+      return
+    }
+
+    var files = []
+    try {
+      files = JSON.parse(rawJson || "[]")
+    } catch (e) {
+      return
+    }
+    if (!Array.isArray(files)) return
+
+    var merged = root.answerPlugins.slice()
+
+    for (var i = 0; i < files.length; i++) {
+      var file = files[i] || ({})
+      var name = String(file.path || "")
+      var plugin = null
+
+      try {
+        plugin = QueryPlugins.normalizeDescriptor(
+          QueryPlugins.compileDescriptor(file.source, name, {
+            home: Quickshell.env("HOME"),
+            dir: root.userPluginDir,
+            pluginDir: root.pluginDir
+          }), "user")
+      } catch (e) {
+        console.warn("irostom.menu: query plugin " + name + " failed to load: " + e)
+        continue
+      }
+      if (!plugin) continue
+
+      // A user plugin claiming a built-in id replaces it rather than racing
+      // it, which is how someone swaps out the shipped calculator.
+      var replaced = false
+      for (var j = 0; j < merged.length; j++) {
+        if (merged[j].id === plugin.id) { merged[j] = plugin; replaced = true; break }
+      }
+      if (!replaced) merged.push(plugin)
+    }
+
+    root.answerPlugins = merged
+  }
+
+  function clearAnswers() {
+    root.answerRevision += 1
+    root.answerQueue = []
+    root.answerFocusable = false
+    answerDebounce.stop()
+    answerWatchdog.stop()
+    if (answerProc.running) answerProc.signal(9)
+    if (root.answerRows.length > 0) root.answerRows = []
+  }
+
+  function scheduleAnswers() {
+    // dmenu is a caller's list of options, not a place for our answers.
+    if (root.dmenuActive || !root.opened) { root.clearAnswers(); return }
+
+    var query = root.filterText.trim()
+    if (!query) { root.clearAnswers(); return }
+
+    var matches = QueryPlugins.matchAll(root.answerPlugins, query)
+    if (matches.length === 0) { root.clearAnswers(); return }
+
+    // Any answer still on screen belongs to the previous query.
+    root.answerRevision += 1
+    root.answerQueue = []
+    answerWatchdog.stop()
+    if (answerProc.running) answerProc.signal(9)
+    if (root.answerRows.length > 0) root.answerRows = []
+
+    var revision = root.answerRevision
+    var rows = []
+    var queue = []
+    var debounce = 0
+
+    for (var i = 0; i < matches.length; i++) {
+      var plugin = matches[i].plugin
+      var match = matches[i].match
+
+      if (plugin.kind === "js") {
+        // Synchronous: no debounce, no process, answer in this frame.
+        try {
+          rows = rows.concat(QueryPlugins.normalizeRows(plugin.rows(match), plugin, match))
+        } catch (e) {
+          console.warn("irostom.menu: query plugin " + plugin.id + " threw: " + e)
+          plugin.disabled = true
+        }
+      } else {
+        queue.push({ plugin: plugin, match: match })
+        debounce = Math.max(debounce, plugin.debounce)
+      }
+
+      if (i === 0) root.answerFocusable = QueryPlugins.answerTakesFocus(plugin, match)
+    }
+
+    if (rows.length > 0) root.answerRows = rows
+
+    root.answerQueue = queue
+    if (queue.length > 0) {
+      answerDebounce.revision = revision
+      answerDebounce.interval = Math.max(1, debounce)
+      answerDebounce.restart()
+    }
+  }
+
+  function runNextAnswer() {
+    if (answerProc.running) return
+    if (root.answerQueue.length === 0) return
+
+    var next = root.answerQueue[0]
+    root.answerQueue = root.answerQueue.slice(1)
+
+    var plugin = next.plugin
+    var text = next.match.text
+    var argv = plugin.argv.slice()
+
+    if (plugin.queryVia === "argv") {
+      for (var i = 0; i < argv.length; i++) {
+        if (argv[i] === "{{query}}") argv[i] = text
+      }
+    }
+
+    answerProc.pluginId = plugin.id
+    answerProc.revision = root.answerRevision
+    answerProc.stdinText = plugin.queryVia === "stdin" ? text : ""
+    answerProc.stdinEnabled = plugin.queryVia === "stdin"
+    // The query goes through the environment or as one whole argv element,
+    // never spliced into a shell string.
+    answerProc.environment = ({ "OMARCHY_QUERY": text })
+    answerWatchdog.interval = Math.max(50, plugin.timeout)
+    answerProc.command = argv
+    answerProc.running = true
+  }
+
+  function pluginById(id) {
+    for (var i = 0; i < root.answerPlugins.length; i++) {
+      if (root.answerPlugins[i].id === id) return root.answerPlugins[i]
+    }
+    return null
+  }
+
+  function deliverAnswers(pluginId, revision, code, status, text) {
+    if (revision !== root.answerRevision) return
+    if (!root.opened || root.dmenuActive) return
+
+    var plugin = root.pluginById(pluginId)
+    if (!plugin) return
+
+    if (!QueryPlugins.acceptsExit(plugin, code, status)) {
+      root.noteAnswerFailure(plugin)
+      return
+    }
+
+    var payload = QueryPlugins.parseCommandOutput(text)
+    if (!payload) return
+
+    plugin.failures = 0
+    var rows = QueryPlugins.normalizeRows(payload, plugin, null)
+    if (rows.length === 0) return
+
+    root.answerRows = root.answerRows.concat(rows)
+    root.rebuildDisplay()
+  }
+
+  // A plugin that keeps failing is a plugin that keeps costing a process per
+  // query for nothing. Stop asking it until the shell reloads.
+  function noteAnswerFailure(plugin) {
+    plugin.failures += 1
+    if (plugin.failures < 3) return
+    plugin.disabled = true
+    console.warn("irostom.menu: query plugin " + plugin.id + " disabled after 3 consecutive failures")
+  }
+
+  function applyAnswer(row) {
+    applySerial = requestSerial
+    opened = false
+    filterText = ""
+
+    if (row.actionArgv) {
+      var argv = []
+      try { argv = JSON.parse(row.actionArgv) } catch (e) { argv = [] }
+      if (argv.length > 0) { Util.execArgv(argv); return }
+    }
+
+    if (row.action) { Util.execDetached(row.action); return }
+
+    // The default: put the value on the clipboard. Over stdin, because
+    // wl-copy has no `--` terminator and would read a value like "-42" as an
+    // option, and because the clipboard content never lands in the process
+    // table this way.
+    clipProc.payload = row.copyText || row.label
+    clipProc.running = true
+  }
+
+  // Where the cursor sits when the user has not moved it. An answer only
+  // takes row 0 when it was explicitly asked for; otherwise Enter stays
+  // aimed at the first real search result.
+  function firstSelectableIndex() {
+    if (displayModel.count === 0) return 0
+    if (root.answerFocusable) return 0
+
+    for (var i = 0; i < displayModel.count; i++) {
+      if (displayModel.get(i).kind !== "answer") return i
+    }
+    return 0
+  }
+
+  Timer {
+    id: answerDebounce
+    property int revision: 0
+    repeat: false
+    onTriggered: {
+      if (answerDebounce.revision !== root.answerRevision) return
+      root.runNextAnswer()
+    }
+  }
+
+  Process {
+    id: answerProc
+    property string pluginId: ""
+    property string stdinText: ""
+    property int revision: 0
+    stdout: StdioCollector { id: answerOut; waitForEnd: true }
+    onStarted: {
+      if (answerProc.stdinText) {
+        answerProc.write(answerProc.stdinText + "\n")
+        answerProc.stdinEnabled = false
+      }
+      answerWatchdog.restart()
+    }
+    onExited: function(exitCode, exitStatus) {
+      answerWatchdog.stop()
+      root.deliverAnswers(answerProc.pluginId, answerProc.revision, exitCode, exitStatus, answerOut.text)
+      root.runNextAnswer()
+    }
+  }
+
+  // A plugin that hangs must not hang the menu. SIGKILL, because a plugin
+  // wedged on a network read will not act on anything politer.
+  Timer {
+    id: answerWatchdog
+    repeat: false
+    onTriggered: {
+      if (!answerProc.running) return
+      var plugin = root.pluginById(answerProc.pluginId)
+      if (plugin) root.noteAnswerFailure(plugin)
+      answerProc.signal(9)
+    }
+  }
+
+  Process {
+    id: clipProc
+    property string payload: ""
+    command: ["wl-copy"]
+    stdinEnabled: true
+    onStarted: {
+      clipProc.write(clipProc.payload)
+      clipProc.stdinEnabled = false
+    }
+  }
+
+  // One process rather than a FileView per file: the set is small, read once
+  // at startup and again on refresh(), and this keeps the whole scan in a
+  // single place that is easy to reason about.
+  Process {
+    id: pluginScanProc
+    command: ["bash", "-c",
+      'dir="${XDG_CONFIG_HOME:-$HOME/.config}/omarchy/menu-plugins"; '
+      + '[ -d "$dir" ] || { echo "[]"; exit 0; }; '
+      + 'for f in "$dir"/*.js; do [ -f "$f" ] || continue; '
+      + 'jq -n --arg path "$f" --rawfile source "$f" \'{path:$path, source:$source}\'; '
+      + 'done | jq -sc .']
+    stdout: StdioCollector { id: pluginScanOut; waitForEnd: true }
+    onExited: function(exitCode, exitStatus) {
+      if (exitCode === 0 && exitStatus === 0) root.mergeUserAnswerPlugins(pluginScanOut.text)
     }
   }
 
@@ -1182,9 +1591,16 @@ Item {
             section.delegate: Item {
               required property string section
 
+              // ListView draws a section header above the first row of each
+              // group. Answers sort first, so the plain "" group's header is
+              // exactly where the rule under the answers belongs -- and it
+              // collapses to nothing when there are no answers, leaving the
+              // no-answer case pixel-identical to upstream.
+              readonly property bool underAnswers: section === "" && root.answerRows.length > 0
+
               width: ListView.view.width
-              height: section === "drilldown" ? root.dividerHeight : 0
-              visible: section === "drilldown"
+              height: (section === "drilldown" || underAnswers) ? root.dividerHeight : 0
+              visible: section === "drilldown" || underAnswers
 
               Rectangle {
                 anchors.left: parent.left
@@ -1211,6 +1627,8 @@ Item {
               required property string detail
               required property string path
               required property string action
+              required property string actionArgv
+              required property string copyText
               required property int childCount
 
               readonly property bool hasCursor: root.cursorActive && row.index === root.selectedIndex
@@ -1218,7 +1636,7 @@ Item {
               readonly property bool hasIcon: row.icon.length > 0 || row.isApp
 
               width: ListView.view.width
-              height: root.rowHeightForDetail(row.detail)
+              height: root.rowHeightForDetail(row.detail, row.kind)
               radius: root.cornerRadius
               color: row.hasCursor ? root.selectedBackground : "transparent"
               borderSpec: row.hasCursor ? root.selectedBorderSpec : Border.none()
@@ -1283,7 +1701,8 @@ Item {
                   text: row.label
                   color: row.hasCursor ? root.selectedText : root.foreground
                   font.family: root.fontFamily
-                  font.pixelSize: Style.font.heading
+                  // An answer is a value, not a name. Give it room.
+                  font.pixelSize: row.kind === "answer" ? Style.font.display : Style.font.heading
                   font.weight: Font.Medium
                   elide: Text.ElideRight
                 }
@@ -1292,7 +1711,7 @@ Item {
                   textFormat: Text.PlainText
                   width: parent.width
                   text: row.detail
-                  visible: (root.filterText || row.kind === "dmenu") && row.detail.length > 0
+                  visible: (root.filterText || row.kind === "dmenu" || row.kind === "answer") && row.detail.length > 0
                   color: root.foreground
                   opacity: 0.52
                   font.family: root.fontFamily
@@ -1322,9 +1741,10 @@ Item {
 
                 Text {
                   textFormat: Text.PlainText
-                  text: row.kind === "menu" || row.kind === "link" ? "›" : ""
+                  // nf-md-content_copy on answers, saying what Enter will do.
+                  text: row.kind === "answer" ? "󰆏" : (row.kind === "menu" || row.kind === "link" ? "›" : "")
                   color: row.hasCursor ? root.selectedText : root.foreground
-                  opacity: row.kind === "menu" || row.kind === "link" ? 0.36 : 0
+                  opacity: (row.kind === "menu" || row.kind === "link" || row.kind === "answer") ? 0.36 : 0
                   font.family: root.fontFamily
                   font.pixelSize: Style.font.heading
                   font.weight: Font.Normal
