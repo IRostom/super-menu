@@ -20,4 +20,8 @@ QtObject {
   property bool actionPanelOpen: false
   // A short confirmation in the footer ("Copied €86.45"), or "".
   property string toastText: ""
+  // Ctrl held on its own: rows show Ctrl+1..9, Ctrl+0 quick-launch keycaps.
+  property bool quickAccessActive: false
+  // The app detail pane beside the list (Ctrl+D on an app row).
+  property bool detailVisible: false
 }

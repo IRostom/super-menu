@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "irostom.menu",
   "name": "My Omarchy menu",
-  "version": "1.5.0",
+  "version": "1.6.0",
   "author": "Omarchy",
   "description": "Omarchy command menu with a query-plugin layer: calculator, unit and currency conversion, and user-written JS or command plugins",
   "kinds": [

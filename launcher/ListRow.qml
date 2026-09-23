@@ -38,6 +38,9 @@ BorderSurface {
   readonly property bool isApp: row.kind === "app"
   readonly property bool isAnswer: row.kind === "answer"
   readonly property bool isAnswerCard: row.isAnswer && row.question.length > 0
+  // Ctrl held: the first ten rows show the Ctrl+digit that launches them,
+  // in place of their type label.
+  readonly property bool showsQuickAccess: row.launcher.quickAccessActive && row.index < 10 && !row.isAnswerCard
   readonly property color textColor: row.hasCursor ? row.appearance.selectedText : row.appearance.foreground
   readonly property string accessory: {
     if (row.kind === "app") return "Application"
@@ -122,6 +125,20 @@ BorderSurface {
     color: row.appearance.muted
     font.family: row.appearance.fontFamily
     font.pixelSize: row.appearance.accessoryFontSize
+    opacity: row.showsQuickAccess ? 0 : 1
+    Behavior on opacity { NumberAnimation { duration: 120; easing.type: Easing.OutCubic } }
+  }
+
+  Keycaps {
+    anchors.right: parent.right
+    anchors.rightMargin: row.appearance.rowReservedBorderRight + row.appearance.rowPaddingX
+    anchors.verticalCenter: parent.verticalCenter
+    appearance: row.appearance
+    tokens: ["Ctrl", String((row.index + 1) % 10)]
+    contentColor: row.hasCursor ? row.appearance.selectedText : row.appearance.foreground
+    opacity: row.showsQuickAccess ? 1 : 0
+    visible: opacity > 0
+    Behavior on opacity { NumberAnimation { duration: 120; easing.type: Easing.OutCubic } }
   }
 
   // --- answers with a question: question -> answer card -----------------

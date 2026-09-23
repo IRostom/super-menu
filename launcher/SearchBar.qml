@@ -17,6 +17,8 @@ Item {
   property bool showBack: false
   // function(event, input) -> bool. True when the key was handled.
   property var keyHandler: null
+  // function(event), for releases (letting go of Ctrl ends quick access).
+  property var keyReleaseHandler: null
 
   signal textEdited(string text)
   signal backRequested()
@@ -79,6 +81,9 @@ Item {
 
     Keys.onPressed: function(event) {
       if (bar.keyHandler && bar.keyHandler(event, input)) event.accepted = true
+    }
+    Keys.onReleased: function(event) {
+      if (bar.keyReleaseHandler) bar.keyReleaseHandler(event)
     }
   }
 

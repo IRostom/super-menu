@@ -50,7 +50,7 @@ function keycaps(spec) {
   })
 }
 
-// ctx: { isFavorite(id), inSuggestions, canUninstall }
+// ctx: { isFavorite(id), inSuggestions, canUninstall, detailsShown }
 function actionsFor(row, ctx) {
   if (!row) return []
   var list = []
@@ -71,6 +71,7 @@ function actionsFor(row, ctx) {
     var pinned = ctx.isFavorite(row.itemId)
     list.push({ id: "favorite", title: pinned ? "Remove from Favorites" : "Add to Favorites", icon: pinned ? "󰓒" : "󰓎", keys: "ctrl+shift+f" })
   }
+  if (row.kind === "app") list.push({ id: "details", title: ctx.detailsShown ? "Hide Details" : "Show Details", icon: "󰋼", keys: "ctrl+d" })
   if (ctx.inSuggestions) list.push({ id: "forget", title: "Remove from Suggestions", icon: "󰜺", keys: "" })
 
   if (row.kind === "app") list.push({ id: "copy", title: "Copy Desktop ID", icon: "󰆏", keys: "ctrl+shift+c", text: row.appId })

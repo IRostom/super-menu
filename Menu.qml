@@ -158,6 +158,8 @@ Item {
     deleteConfirmOpen = false
     deleteTarget = null
     actionPanelOpen = false
+    quickAccessDelay.stop()
+    quickAccessActive = false
     closeAfterToast.stop()
     closingSoon = false
     toastTimer.stop()
@@ -171,6 +173,8 @@ Item {
   property alias hoveredIndex: menuState.hoveredIndex
   property alias actionPanelOpen: menuState.actionPanelOpen
   property alias toastText: menuState.toastText
+  property alias quickAccessActive: menuState.quickAccessActive
+  property alias detailVisible: menuState.detailVisible
   property alias background: menuAppearance.background
   property alias foreground: menuAppearance.foreground
   property alias border: menuAppearance.border
@@ -789,7 +793,7 @@ Item {
   // What the selected row can do (Actions.js). The footer shows the first
   // and the action panel lists them all. The arguments are only there so the
   // binding re-evaluates when the rows, the selection or the history change.
-  readonly property var selectedActions: root.actionsForSelection(root.selectedIndex, root.cursorActive, root.layoutSerial, menuHistory.favorites, menuHistory.recents)
+  readonly property var selectedActions: root.actionsForSelection(root.selectedIndex, root.cursorActive, root.layoutSerial, menuHistory.favorites, menuHistory.recents, root.detailVisible)
 
   function selectedRow() {
     if (!root.cursorActive || root.selectedIndex < 0 || root.selectedIndex >= displayModel.count) return null
@@ -802,7 +806,8 @@ Item {
     var list = Actions.actionsFor(row, {
       isFavorite: menuHistory.isFavorite,
       inSuggestions: row.section === "Suggestions",
-      canUninstall: !!root.appLibrary
+      canUninstall: !!root.appLibrary,
+      detailsShown: root.detailVisible
     })
     for (var i = 0; i < list.length; i++) list[i].keycaps = Actions.keycaps(list[i].keys)
     return list
@@ -830,11 +835,14 @@ Item {
       root.copyAndClose(action.text)
     } else if (action.id === "uninstall") {
       root.requestDeleteSelected()
+    } else if (action.id === "details") {
+      root.detailVisible = !root.detailVisible
     }
   }
 
   function openActionPanel() {
     if (root.selectedActions.length === 0) return
+    root.endQuickAccess()
     root.actionPanelOpen = true
     actionPanel.show()
   }
@@ -900,6 +908,51 @@ Item {
     root.filterText = ""
   }
 
+  // --- app details -----------------------------------------------------
+  // The pane shows while it is switched on and the selected row is an app;
+  // other rows get the full width back.
+  readonly property var selectedAppDetails: root.appDetails(root.selectedIndex, root.cursorActive, root.layoutSerial)
+  readonly property bool detailShown: root.detailVisible && !root.dmenuActive && root.selectedAppDetails !== null
+
+  function appDetails() {
+    var row = root.selectedRow()
+    if (!row || row.kind !== "app") return null
+    var entry = DesktopEntries.byId(row.appId)
+    if (!entry) return null
+    var join = function(list) {
+      try { return list && list.length ? Array.prototype.slice.call(list).join(", ") : "" } catch (e) { return "" }
+    }
+    return {
+      name: row.label,
+      genericName: String(entry.genericName || ""),
+      comment: String(entry.comment || ""),
+      iconSource: root.appLibrary ? root.appLibrary.iconSource(row.appIcon) : "",
+      command: String(entry.execString || ""),
+      categories: join(entry.categories),
+      keywords: join(entry.keywords),
+      desktopId: row.appId,
+      terminal: !!entry.runInTerminal
+    }
+  }
+
+  // --- quick access ------------------------------------------------------
+  // Holding Ctrl on its own for a moment shows Ctrl+1..9, Ctrl+0 on the first
+  // ten rows; Ctrl+digit runs that row whether or not the keycaps showed.
+  Timer {
+    id: quickAccessDelay
+    interval: 250
+    onTriggered: root.quickAccessActive = true
+  }
+
+  function endQuickAccess() {
+    quickAccessDelay.stop()
+    root.quickAccessActive = false
+  }
+
+  function handleSearchKeyRelease(event) {
+    if (event.key === Qt.Key_Control && !event.isAutoRepeat) root.endQuickAccess()
+  }
+
   readonly property string footerTitle: {
     if (root.dmenuActive) return root.dmenuPrompt
     if (root.activeMenu === "root") return "Omarchy"
@@ -920,6 +973,24 @@ Item {
   function handleSearchKey(event, input) {
     if (root.closingSoon) {
       if (event.key === Qt.Key_Escape) root.closeAfterCopy()
+      return true
+    }
+
+    // Holding Ctrl auto-repeats as release/press pairs; only the first real
+    // press and the final real release count.
+    if (event.key === Qt.Key_Control) {
+      if (!event.isAutoRepeat && !quickAccessDelay.running && !root.quickAccessActive) quickAccessDelay.start()
+      return false
+    }
+    root.endQuickAccess()
+
+    if (event.modifiers === Qt.ControlModifier && event.key >= Qt.Key_0 && event.key <= Qt.Key_9) {
+      var slot = event.key === Qt.Key_0 ? 9 : event.key - Qt.Key_1
+      if (slot < displayModel.count) {
+        root.cursorActive = true
+        root.selectedIndex = slot
+        root.activateIndex(slot)
+      }
       return true
     }
 
@@ -1722,6 +1793,7 @@ Item {
           placeholder: root.searchPlaceholder
           showBack: !root.dmenuActive && root.activeMenu !== "root"
           keyHandler: root.handleSearchKey
+          keyReleaseHandler: root.handleSearchKeyRelease
           onTextEdited: function(text) { root.setFilter(text) }
           onBackRequested: {
             root.goBack()
@@ -1749,7 +1821,10 @@ Item {
 
           ListView {
             id: resultList
-            anchors.fill: parent
+            anchors.left: parent.left
+            anchors.top: parent.top
+            anchors.bottom: parent.bottom
+            width: root.detailShown ? Math.round(parent.width * 0.45) : parent.width
             model: displayModel
             clip: true
             spacing: root.rowSpacing
@@ -1780,9 +1855,26 @@ Item {
           }
 
           ScrollFades {
-            anchors.fill: parent
+            anchors.fill: resultList
             list: resultList
             background: root.background
+          }
+
+          Rectangle {
+            visible: root.detailShown
+            x: resultList.width + menuAppearance.listInset
+            width: Style.spacing.hairline
+            height: parent.height
+            color: menuAppearance.divider
+          }
+
+          DetailPane {
+            visible: root.detailShown
+            x: resultList.width + menuAppearance.listInset + Style.spacing.hairline
+            width: parent.width - x
+            height: parent.height
+            appearance: menuAppearance
+            details: root.selectedAppDetails
           }
 
           EmptyState {
