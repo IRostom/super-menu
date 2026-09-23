@@ -60,6 +60,13 @@ Enter to run, Esc or Ctrl+B to close. The actions are defined in
 | Answer | Copy (or Run, if the plugin gives an action) |
 | Any row in Suggestions | also Remove from Suggestions |
 
+### Progress
+
+The rule under the search field doubles as a progress bar. While a menu
+provider or a `command` query plugin is running, a short accent segment
+sweeps across it. It waits 250ms before showing, so fast answers never
+flicker it.
+
 ### Rows and sections
 
 Rows follow vicinae's layout: an icon, the title with its subtitle (the
@@ -180,11 +187,21 @@ loose trigger costs one on every keystroke.
   copy:   "€86.45283998",    // what Enter copies; defaults to value
   action: "",                // shell string to run instead of copying
   actionArgv: [],            // preferred: argv, run without a shell
-  icon:   ""                 // defaults to the descriptor's icon
+  icon:   "",                // defaults to the descriptor's icon
+  question: "100 usd to eur",// optional: render as a question -> answer card
+  questionLabel: "",         // caption under the question (default "Expression")
+  answerLabel: ""            // caption under the answer (default "Result")
 }
 ```
 
-Enter runs `actionArgv` if set, else `action`, else copies `copy`.
+With a `question`, the row is drawn as vicinae's two-column calculator card:
+the question on the left with its operators dimmed, the answer on the right,
+an arrow between. Without one it is a single row with the value large. The
+built-in calculator sends its query as the question.
+
+Enter runs `actionArgv` if set, else `action`, else copies `copy`. A copy
+shows "Copied …" in the footer for a moment before the launcher closes (Esc
+closes it at once).
 
 ### Focus
 
@@ -237,7 +254,7 @@ qalc -e -t 1
 | File | Role |
 |---|---|
 | `Menu.qml` | Cloned menu logic: IPC, menu tree, providers, dmenu, query plugins, layout sizing. Query-plugin hooks are marked in the source. |
-| `launcher/` | The menu's view: `Appearance.qml` (visual tokens, window size), `LauncherState.qml` (state the views read), `SearchBar.qml`, `ListRow.qml` + `IconTile.qml`, `SectionHeader.qml`, `Footer.qml` + `FooterButton.qml`, `ActionPanel.qml`, `Keycaps.qml`, scroll fades and empty state. `Menu.qml` aliases the tokens and state under their old names. |
+| `launcher/` | The menu's view: `Appearance.qml` (visual tokens, window size), `LauncherState.qml` (state the views read), `SearchBar.qml`, `ListRow.qml` + `IconTile.qml`, `SectionHeader.qml`, `Footer.qml` + `FooterButton.qml`, `ActionPanel.qml`, `Keycaps.qml`, `AnswerCard.qml` + `Badge.qml`, `LoadingBar.qml`, scroll fades and empty state. `Menu.qml` aliases the tokens and state under their old names. |
 | `MenuModel.js` | Cloned model helpers, plus the `copyText`/`actionArgv` roles. |
 | `QueryPlugins.js` | Registry, trigger gate, row normalization, JS compilation. |
 | `QueryBuiltins.js` | Descriptors for the shipped plugins. |

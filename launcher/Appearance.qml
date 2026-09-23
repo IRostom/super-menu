@@ -32,6 +32,9 @@ QtObject {
   property int searchBarHeight: Style.space(60)
   property int searchFontSize: Math.round(Style.font.heading * 1.2)
   property color divider: Util.alpha(foreground, 0.1)
+  property color accent: Color.accent
+  // Toast dot for things that worked (Copied, Added to Favorites).
+  readonly property color success: appearance.palette.green || Color.accent
   property color shadow: Qt.rgba(0, 0, 0, 0.35)
   property int shadowBlur: Style.space(28)
   property int shadowOffset: Style.space(6)
@@ -60,8 +63,12 @@ QtObject {
   property int rowPeek: Math.round(baseRowHeight * 0.55)
   property int rowSpacing: 0
 
-  function rowHeightFor(kind) {
-    return kind === "answer" ? appearance.answerRowHeight : appearance.baseRowHeight
+  property int answerCardHeight: Style.space(110)
+
+  // An answer with a question renders as the two-column card.
+  function rowHeightFor(kind, hasQuestion) {
+    if (kind !== "answer") return appearance.baseRowHeight
+    return hasQuestion ? appearance.answerCardHeight : appearance.answerRowHeight
   }
 
   // Icon tiles take their hue from the theme's named colors, so each

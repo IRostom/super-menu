@@ -15,6 +15,8 @@ Item {
   property bool hasMoreActions: false
   property var panelKeycaps: []
   property bool panelOpen: false
+  // When set, the toast replaces the context on the left.
+  property string toastText: ""
 
   signal primaryClicked()
   signal actionsClicked()
@@ -43,6 +45,36 @@ Item {
   }
 
   Row {
+    visible: footer.toastText.length > 0
+    anchors.left: parent.left
+    anchors.leftMargin: footer.appearance.listInset + footer.appearance.rowPaddingX
+    anchors.right: buttons.left
+    anchors.rightMargin: Style.space(12)
+    anchors.verticalCenter: parent.verticalCenter
+    spacing: Style.space(8)
+    clip: true
+
+    Rectangle {
+      anchors.verticalCenter: parent.verticalCenter
+      width: Style.space(10)
+      height: width
+      radius: width / 2
+      color: footer.appearance.success
+    }
+
+    Text {
+      anchors.verticalCenter: parent.verticalCenter
+      textFormat: Text.PlainText
+      text: footer.toastText
+      color: footer.appearance.foreground
+      font.family: footer.appearance.fontFamily
+      font.pixelSize: footer.appearance.accessoryFontSize
+      elide: Text.ElideRight
+    }
+  }
+
+  Row {
+    visible: footer.toastText.length === 0
     anchors.left: parent.left
     anchors.leftMargin: footer.appearance.listInset + footer.appearance.rowPaddingX
     anchors.right: buttons.left

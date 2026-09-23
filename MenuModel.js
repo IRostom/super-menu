@@ -371,6 +371,9 @@ function displayRow(items, itemOrder, checkedResults, entry, detail, score, sect
     // declares them required, so every builder has to emit the same key set.
     actionArgv: "",
     copyText: "",
+    question: "",
+    questionLabel: "",
+    answerLabel: "",
     provider: entry.provider || "",
     score: score || 0,
     section: section || ""

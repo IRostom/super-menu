@@ -346,6 +346,11 @@ function normalizeRows(rawRows, plugin, match) {
       action: str(r.action),
       actionArgv: actionArgv.length > 0 ? JSON.stringify(actionArgv) : "",
       copyText: str(r.copy !== undefined ? r.copy : value),
+      // Optional: with a question, the row renders as a two-column
+      // question -> answer card; the labels caption each side.
+      question: str(r.question),
+      questionLabel: str(r.questionLabel),
+      answerLabel: str(r.answerLabel),
       provider: plugin.id,
       score: -1,
       section: "answer"

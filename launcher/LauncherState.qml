@@ -18,4 +18,6 @@ QtObject {
   property var answerRows: []
   property bool deleteConfirmOpen: false
   property bool actionPanelOpen: false
+  // A short confirmation in the footer ("Copied €86.45"), or "".
+  property string toastText: ""
 }

@@ -87,5 +87,7 @@ display=$(printf '%s' "$raw" | awk '
 ')
 [[ -n ${display//[[:space:]]/} ]] || display=$raw
 
-jq -nc --arg value "$display" --arg detail "= $query" --arg copy "$raw" \
-  '{value:$value, detail:$detail, copy:$copy}'
+# `question` asks the menu for its two-column question -> answer card; the
+# plain value/detail pair is the fallback for anything that ignores it.
+jq -nc --arg value "$display" --arg detail "= $query" --arg copy "$raw" --arg question "$query" \
+  '{value:$value, detail:$detail, copy:$copy, question:$question}'

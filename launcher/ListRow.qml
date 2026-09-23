@@ -19,6 +19,9 @@ BorderSurface {
   required property string appIcon
   required property string label
   required property string detail
+  required property string question
+  required property string questionLabel
+  required property string answerLabel
 
   required property Appearance appearance
   required property LauncherState launcher
@@ -34,6 +37,7 @@ BorderSurface {
   readonly property bool hovered: !row.hasCursor && row.index === row.launcher.hoveredIndex && mouseArea.containsMouse
   readonly property bool isApp: row.kind === "app"
   readonly property bool isAnswer: row.kind === "answer"
+  readonly property bool isAnswerCard: row.isAnswer && row.question.length > 0
   readonly property color textColor: row.hasCursor ? row.appearance.selectedText : row.appearance.foreground
   readonly property string accessory: {
     if (row.kind === "app") return "Application"
@@ -43,13 +47,14 @@ BorderSurface {
   }
 
   width: ListView.view.width
-  height: row.appearance.rowHeightFor(row.kind)
+  height: row.appearance.rowHeightFor(row.kind, row.question.length > 0)
   radius: row.appearance.cornerRadius
   color: row.hasCursor ? row.appearance.selectedBackground : (row.hovered ? row.appearance.hoverBackground : "transparent")
   borderSpec: row.hasCursor ? row.appearance.selectedBorderSpec : Border.none()
 
   IconTile {
     id: iconTile
+    visible: !row.isAnswerCard
     appearance: row.appearance
     anchors.left: parent.left
     anchors.leftMargin: row.appearance.rowReservedBorderLeft + row.appearance.rowPaddingX
@@ -119,9 +124,23 @@ BorderSurface {
     font.pixelSize: row.appearance.accessoryFontSize
   }
 
-  // --- answers: the value large, what it answers underneath ------------
+  // --- answers with a question: question -> answer card -----------------
+  AnswerCard {
+    visible: row.isAnswerCard
+    anchors.fill: parent
+    anchors.leftMargin: row.appearance.rowPaddingX
+    anchors.rightMargin: row.appearance.rowPaddingX
+    appearance: row.appearance
+    question: row.question
+    answer: row.label
+    questionLabel: row.questionLabel
+    answerLabel: row.answerLabel
+    selected: row.hasCursor
+  }
+
+  // --- other answers: the value large, what it answers underneath ------
   Column {
-    visible: row.isAnswer
+    visible: row.isAnswer && !row.isAnswerCard
     anchors.left: iconTile.right
     anchors.leftMargin: Style.space(10)
     anchors.right: copyHint.left
@@ -155,7 +174,7 @@ BorderSurface {
 
   Text {
     id: copyHint
-    visible: row.isAnswer
+    visible: row.isAnswer && !row.isAnswerCard
     anchors.right: parent.right
     anchors.rightMargin: row.appearance.rowReservedBorderRight + row.appearance.rowPaddingX
     anchors.verticalCenter: parent.verticalCenter

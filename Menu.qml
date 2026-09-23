@@ -154,7 +154,15 @@ Item {
   AppLibrary { id: ownAppLibrary }
   property alias deleteConfirmOpen: menuState.deleteConfirmOpen
   property var deleteTarget: null
-  onOpenedChanged: if (!opened) { deleteConfirmOpen = false; deleteTarget = null; actionPanelOpen = false }
+  onOpenedChanged: if (!opened) {
+    deleteConfirmOpen = false
+    deleteTarget = null
+    actionPanelOpen = false
+    closeAfterToast.stop()
+    closingSoon = false
+    toastTimer.stop()
+    toastText = ""
+  }
   // Visual tokens and view-facing state live in launcher/. The aliases keep
   // the logic below reading and writing them under their old names.
   Appearance { id: menuAppearance }
@@ -162,6 +170,7 @@ Item {
   MenuHistory { id: menuHistory }
   property alias hoveredIndex: menuState.hoveredIndex
   property alias actionPanelOpen: menuState.actionPanelOpen
+  property alias toastText: menuState.toastText
   property alias background: menuAppearance.background
   property alias foreground: menuAppearance.foreground
   property alias border: menuAppearance.border
@@ -221,9 +230,6 @@ Item {
     Util.execDetached(command)
   }
 
-  function rowHeightForDetail(detail, kind) {
-    return menuAppearance.rowHeightFor(kind)
-  }
 
   // Height a dmenu card can devote to rows before running off the screen.
   function availableRowsHeight() {
@@ -260,7 +266,7 @@ Item {
     var total = 0
     for (var i = 0; i < displayModel.count; i++) {
       if (i > 0) total += root.rowSpacing
-      total += root.rowHeightForDetail(displayModel.get(i).detail, displayModel.get(i).kind)
+      total += menuAppearance.rowHeightFor(displayModel.get(i).kind, false)
       totals.push(total)
     }
 
@@ -592,6 +598,11 @@ Item {
         path: "",
         childCount: 0,
         action: "",
+        actionArgv: "",
+        copyText: "",
+        question: "",
+        questionLabel: "",
+        answerLabel: "",
         provider: "",
         score: i,
         section: ""
@@ -806,12 +817,14 @@ Item {
       root.activateIndex(root.selectedIndex)
     } else if (action.id === "favorite") {
       menuHistory.toggleFavorite(row.itemId)
+      root.showToast(menuHistory.isFavorite(row.itemId) ? "Added to Favorites" : "Removed from Favorites")
       // Keep the cursor on the same row when it moves into or out of
       // Favorites; rebuildDisplay() restores it by id.
       root.cursorMoved = true
       root.rebuildDisplay()
     } else if (action.id === "forget") {
       menuHistory.forgetRecent(row.itemId)
+      root.showToast("Removed from Suggestions")
       root.rebuildDisplay()
     } else if (action.id === "copy") {
       root.copyAndClose(action.text)
@@ -847,11 +860,44 @@ Item {
     clipProc.running = true
   }
 
-  function copyAndClose(text) {
-    applySerial = requestSerial
-    opened = false
-    filterText = ""
+  // Copy, confirm it in the footer, then close: the toast is the only sign
+  // the copy happened, so the launcher stays up long enough to read it.
+  function copyAndClose(text, shown) {
     root.copyText(text)
+    var label = String(shown || text || "")
+    if (label.length > 40) label = label.substring(0, 39) + "…"
+    root.showToast("Copied " + label)
+    root.closingSoon = true
+    closeAfterToast.restart()
+  }
+
+  // Set between a copy and the close that follows it. Keys are ignored then,
+  // except Esc, which closes at once.
+  property bool closingSoon: false
+
+  function showToast(text) {
+    root.toastText = text
+    toastTimer.restart()
+  }
+
+  Timer {
+    id: toastTimer
+    interval: 2000
+    onTriggered: root.toastText = ""
+  }
+
+  Timer {
+    id: closeAfterToast
+    interval: 900
+    onTriggered: root.closeAfterCopy()
+  }
+
+  function closeAfterCopy() {
+    closeAfterToast.stop()
+    root.closingSoon = false
+    root.applySerial = root.requestSerial
+    root.opened = false
+    root.filterText = ""
   }
 
   readonly property string footerTitle: {
@@ -872,6 +918,11 @@ Item {
   // drive the list and leaves text editing (typing, cursor movement, paste,
   // Ctrl+Backspace) to the input.
   function handleSearchKey(event, input) {
+    if (root.closingSoon) {
+      if (event.key === Qt.Key_Escape) root.closeAfterCopy()
+      return true
+    }
+
     // The dialog owns the keyboard while it is up; nothing may reach the input.
     if (root.deleteConfirmOpen) {
       deleteConfirm.handleKey(event)
@@ -1371,20 +1422,23 @@ Item {
   }
 
   function applyAnswer(row) {
-    applySerial = requestSerial
-    opened = false
-    filterText = ""
-
+    var argv = []
     if (row.actionArgv) {
-      var argv = []
       try { argv = JSON.parse(row.actionArgv) } catch (e) { argv = [] }
-      if (argv.length > 0) { Util.execArgv(argv); return }
     }
 
-    if (row.action) { Util.execDetached(row.action); return }
+    if (argv.length > 0 || row.action) {
+      applySerial = requestSerial
+      opened = false
+      filterText = ""
+      if (argv.length > 0) Util.execArgv(argv)
+      else Util.execDetached(row.action)
+      return
+    }
 
-    // The default: put the value on the clipboard.
-    root.copyText(row.copyText || row.label)
+    // The default: put the value on the clipboard. The toast shows the
+    // rounded value the row displays; the clipboard gets full precision.
+    root.copyAndClose(row.copyText || row.label, row.label)
   }
 
   // Where the cursor sits when the user has not moved it. An answer only
@@ -1675,11 +1729,12 @@ Item {
           }
         }
 
-        Rectangle {
+        LoadingBar {
           width: parent.width
           height: Style.spacing.hairline
           visible: root.mode !== "input"
-          color: menuAppearance.divider
+          appearance: menuAppearance
+          loading: providerProc.running || answerProc.running
         }
 
         Item {
@@ -1763,6 +1818,7 @@ Item {
         hasMoreActions: root.selectedActions.length > 1
         panelKeycaps: Actions.keycaps(Actions.TOGGLE_PANEL[0])
         panelOpen: root.actionPanelOpen
+        toastText: root.toastText
         onPrimaryClicked: if (root.selectedActions.length > 0) root.runRowAction(root.selectedActions[0])
         onActionsClicked: root.toggleActionPanel()
       }
