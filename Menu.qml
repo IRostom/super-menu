@@ -7,6 +7,7 @@ import qs.Ui
 import "MenuModel.js" as MenuModel
 import "QueryPlugins.js" as QueryPlugins
 import "QueryBuiltins.js" as QueryBuiltins
+import "launcher"
 
 Item {
   id: root
@@ -74,7 +75,7 @@ Item {
 
   function ping() { return "ok" }
 
-  property string fontFamily: Style.font.menuFamily
+  property alias fontFamily: menuAppearance.fontFamily
   // JSONC menu definitions. The shell parses both at startup and merges
   // the user file on top of the defaults, so the keybind → IPC → visible
   // path doesn't have to shell out to bash + jq on every open.
@@ -83,9 +84,9 @@ Item {
   property var defaultMenuItems: []
   property var userMenuItems: []
   property bool opened: false
-  property string mode: "menu"
-  readonly property bool dmenuActive: mode === "select" || mode === "input"
-  property string dmenuPrompt: ""
+  property alias mode: menuState.mode
+  property alias dmenuActive: menuState.dmenuActive
+  property alias dmenuPrompt: menuState.dmenuPrompt
   property var dmenuOptions: []
   property string selectionFile: ""
   property string doneFile: ""
@@ -93,15 +94,15 @@ Item {
   property int dmenuMaxHeight: 0
   property bool requestActive: false
   property bool rowsLoaded: false
-  property string activeMenu: "root"
-  property string filterText: ""
-  property int selectedIndex: 0
-  property bool cursorActive: false
+  property alias activeMenu: menuState.activeMenu
+  property alias filterText: menuState.filterText
+  property alias selectedIndex: menuState.selectedIndex
+  property alias cursorActive: menuState.cursorActive
   property int requestSerial: 0
   property int applySerial: 0
   property var items: ({})
   property var itemOrder: []
-  property var navStack: []
+  property alias navStack: menuState.navStack
   property var providersLoaded: ({})
   property var providerQueue: []
   property int providerRevision: 0
@@ -111,7 +112,7 @@ Item {
   // the menu tree, and are pinned above the search results. See
   // QueryPlugins.js for the gate that decides when a query has an answer.
   property var answerPlugins: []
-  property var answerRows: []
+  property alias answerRows: menuState.answerRows
   property int answerRevision: 0
   property var answerQueue: []
   property bool answerFocusable: false
@@ -119,7 +120,7 @@ Item {
   // user deliberately moved it". cursorActive cannot: setFilter() sets it true
   // on every keystroke.
   property bool cursorMoved: false
-  property int answerRowHeight: Math.max(Style.space(66), Style.font.display + Style.font.bodySmall + Style.spacing.rowPaddingX * 2)
+  property alias answerRowHeight: menuAppearance.answerRowHeight
   readonly property string userPluginDir: (Quickshell.env("XDG_CONFIG_HOME") || (Quickshell.env("HOME") + "/.config")) + "/omarchy/menu-plugins"
   readonly property string pluginDir: {
     var url = String(Qt.resolvedUrl("."))
@@ -148,34 +149,33 @@ Item {
   readonly property var appLibrary: (root.shell && root.shell.appLibrary) ? root.shell.appLibrary : ownAppLibrary
 
   AppLibrary { id: ownAppLibrary }
-  property bool deleteConfirmOpen: false
+  property alias deleteConfirmOpen: menuState.deleteConfirmOpen
   property var deleteTarget: null
   onOpenedChanged: if (!opened) { deleteConfirmOpen = false; deleteTarget = null }
-  // Bound to the central [menu] section in shell.toml via Color.qml.
-  // Each color already includes its alpha companion (composed in the
-  // singleton), so consumers can drop them straight into a Rectangle.
-  property color background: Color.menu.background
-  property color foreground: Color.menu.text
-  property color border: Color.menu.border
-  property var borderSpec: Border.surfaceSpec("menu", "border", border, Math.max(1, Style.space(2)))
-  property color scrim: Color.menu.scrim
-  property color selectedBackground: Color.menu.selectedBackground
-  property color selectedText: Color.menu.selectedText
-  property color selectedBorder: Color.menu.selectedBorder
-  property var selectedBorderSpec: Border.surfaceSpec("menu", "selected-border", selectedBorder, 0)
-  readonly property real rowReservedBorderLeft: Border.left(selectedBorderSpec)
-  readonly property real rowReservedBorderRight: Border.right(selectedBorderSpec)
-  readonly property int cornerRadius: Style.cornerRadius
-  property int contentMargin: Style.spacing.panelPadding
-  property int headerHeight: Math.max(Style.space(34), Style.font.title + Style.spacing.controlPaddingY * 2)
-  property int contentSpacing: Style.spacing.md
-  property int baseRowHeight: Math.max(Style.space(50), Style.font.body + Style.spacing.rowPaddingX * 2)
-  property int detailRowHeight: Math.max(Style.space(58), Style.font.body + Style.font.caption + Style.spacing.rowPaddingX * 2)
-  // How much of the first hidden row stays visible at the fold — enough to
-  // read as a cut-off row rather than a bottom border.
-  property int rowPeek: Math.round(baseRowHeight * 0.55)
-  property int rowSpacing: Style.spacing.xs
-  property int dividerHeight: Style.space(17)
+  // Visual tokens and view-facing state live in launcher/. The aliases keep
+  // the logic below reading and writing them under their old names.
+  Appearance { id: menuAppearance }
+  LauncherState { id: menuState }
+  property alias background: menuAppearance.background
+  property alias foreground: menuAppearance.foreground
+  property alias border: menuAppearance.border
+  property alias borderSpec: menuAppearance.borderSpec
+  property alias scrim: menuAppearance.scrim
+  property alias selectedBackground: menuAppearance.selectedBackground
+  property alias selectedText: menuAppearance.selectedText
+  property alias selectedBorder: menuAppearance.selectedBorder
+  property alias selectedBorderSpec: menuAppearance.selectedBorderSpec
+  property alias rowReservedBorderLeft: menuAppearance.rowReservedBorderLeft
+  property alias rowReservedBorderRight: menuAppearance.rowReservedBorderRight
+  property alias cornerRadius: menuAppearance.cornerRadius
+  property alias contentMargin: menuAppearance.contentMargin
+  property alias headerHeight: menuAppearance.headerHeight
+  property alias contentSpacing: menuAppearance.contentSpacing
+  property alias baseRowHeight: menuAppearance.baseRowHeight
+  property alias detailRowHeight: menuAppearance.detailRowHeight
+  property alias rowPeek: menuAppearance.rowPeek
+  property alias rowSpacing: menuAppearance.rowSpacing
+  property alias dividerHeight: menuAppearance.dividerHeight
   property bool searchDivider: false
   property int layoutSerial: 0
   property int cardWidth: Math.min(root.dmenuActive ? Style.space(root.dmenuWidth) : ((root.activeMenu === "trigger.capture.screenrecord" || root.activeMenu === "style.font") ? Style.space(520) : Style.space(300)), panel.width - Style.gapsOut * 2)
@@ -214,8 +214,7 @@ Item {
   // Menu rows only surface their detail while a search is narrowing them;
   // dmenu rows carry caller-supplied subtext that must always be visible.
   function rowHeightForDetail(detail, kind) {
-    if (kind === "answer") return root.answerRowHeight
-    return (root.filterText || root.dmenuActive) && detail ? root.detailRowHeight : root.baseRowHeight
+    return menuAppearance.rowHeightFor(detail, kind, root.filterText || root.dmenuActive)
   }
 
   // Height the card can devote to rows before running off the screen — or
@@ -1588,252 +1587,37 @@ Item {
 
             section.property: "section"
             section.criteria: ViewSection.FullString
-            section.delegate: Item {
-              required property string section
-
-              // ListView draws a section header above the first row of each
-              // group. Answers sort first, so the plain "" group's header is
-              // exactly where the rule under the answers belongs -- and it
-              // collapses to nothing when there are no answers, leaving the
-              // no-answer case pixel-identical to upstream.
-              readonly property bool underAnswers: section === "" && root.answerRows.length > 0
-
-              width: ListView.view.width
-              height: (section === "drilldown" || underAnswers) ? root.dividerHeight : 0
-              visible: section === "drilldown" || underAnswers
-
-              Rectangle {
-                anchors.left: parent.left
-                anchors.leftMargin: Style.space(4)
-                anchors.right: parent.right
-                anchors.rightMargin: Style.space(4)
-                anchors.verticalCenter: parent.verticalCenter
-                height: Style.spacing.hairline
-                color: Util.alpha(root.foreground, 0.2)
-              }
+            section.delegate: SectionRule {
+              appearance: menuAppearance
+              answersPresent: root.answerRows.length > 0
             }
 
-            delegate: BorderSurface {
-              id: row
-              required property int index
-              required property string itemId
-              required property string kind
-              required property string icon
-              required property string iconFont
-              required property string appIcon
-              required property string appId
-              required property string label
-              required property string target
-              required property string detail
-              required property string path
-              required property string action
-              required property string actionArgv
-              required property string copyText
-              required property int childCount
-
-              readonly property bool hasCursor: root.cursorActive && row.index === root.selectedIndex
-              readonly property bool isApp: row.kind === "app"
-              readonly property bool hasIcon: row.icon.length > 0 || row.isApp
-
-              width: ListView.view.width
-              height: root.rowHeightForDetail(row.detail, row.kind)
-              radius: root.cornerRadius
-              color: row.hasCursor ? root.selectedBackground : "transparent"
-              borderSpec: row.hasCursor ? root.selectedBorderSpec : Border.none()
-
-              Rectangle {
-                visible: false
-                width: Style.space(4)
-                height: parent.height - Style.space(18)
-                radius: Math.min(root.cornerRadius, Style.space(4))
-                color: root.selectedBackground
-                anchors.left: parent.left
-                anchors.leftMargin: root.rowReservedBorderLeft + Style.space(8)
-                anchors.verticalCenter: parent.verticalCenter
+            delegate: ListRow {
+              appearance: menuAppearance
+              launcher: menuState
+              appLibrary: root.appLibrary
+              onPointerMoved: function(index, item, mouse) {
+                root.selectFromPointer(index, item, mouse)
               }
-
-              Text {
-                id: iconText
-                textFormat: Text.PlainText
-                visible: row.hasIcon && !row.isApp
-                text: row.icon
-                color: row.hasCursor ? root.selectedText : root.foreground
-                font.family: row.iconFont.length > 0 ? row.iconFont : root.fontFamily
-                font.pixelSize: Style.font.iconLarge
-                width: Style.space(36)
-                horizontalAlignment: Text.AlignHCenter
-                verticalAlignment: Text.AlignVCenter
-                anchors.left: parent.left
-                anchors.leftMargin: root.rowReservedBorderLeft + Style.space(8)
-                y: contentColumn.y + labelText.y + (labelText.height - height) / 2
-              }
-
-              Image {
-                id: appIconImage
-                visible: row.isApp
-                width: Style.font.iconLarge
-                height: Style.font.iconLarge
-                fillMode: Image.PreserveAspectFit
-                // Decode at physical pixels — a logical-size decode leaves
-                // PNG icons upscaled and blurry on HiDPI displays.
-                sourceSize.width: width * Screen.devicePixelRatio
-                sourceSize.height: height * Screen.devicePixelRatio
-                source: row.isApp && root.appLibrary ? root.appLibrary.iconSource(row.appIcon) : ""
-                asynchronous: true
-                anchors.left: parent.left
-                anchors.leftMargin: root.rowReservedBorderLeft + Style.space(8) + (Style.space(36) - width) / 2
-                y: contentColumn.y + labelText.y + (labelText.height - height) / 2
-              }
-
-              Column {
-                id: contentColumn
-                anchors.left: row.hasIcon ? iconText.right : parent.left
-                anchors.leftMargin: row.hasIcon ? Style.space(6) : root.rowReservedBorderLeft + Style.space(18)
-                anchors.right: trail.left
-                anchors.rightMargin: Style.space(6)
-                anchors.verticalCenter: parent.verticalCenter
-                spacing: Style.space(3)
-
-                Text {
-                  id: labelText
-                  textFormat: Text.PlainText
-                  width: parent.width
-                  text: row.label
-                  color: row.hasCursor ? root.selectedText : root.foreground
-                  font.family: root.fontFamily
-                  // An answer is a value, not a name. Give it room.
-                  font.pixelSize: row.kind === "answer" ? Style.font.display : Style.font.heading
-                  font.weight: Font.Medium
-                  elide: Text.ElideRight
-                }
-
-                Text {
-                  textFormat: Text.PlainText
-                  width: parent.width
-                  text: row.detail
-                  visible: (root.filterText || row.kind === "dmenu" || row.kind === "answer") && row.detail.length > 0
-                  color: root.foreground
-                  opacity: 0.52
-                  font.family: root.fontFamily
-                  font.pixelSize: Style.font.bodySmall
-                  elide: Text.ElideRight
-                }
-              }
-
-              Row {
-                id: trail
-                width: Style.space(14)
-                anchors.right: parent.right
-                anchors.rightMargin: root.rowReservedBorderRight + Style.space(8)
-                y: contentColumn.y + labelText.y + (labelText.height - height) / 2
-                spacing: 0
-
-                Text {
-                  textFormat: Text.PlainText
-                  visible: false
-                  text: row.childCount
-                  color: root.foreground
-                  opacity: 0.45
-                  font.family: root.fontFamily
-                  font.pixelSize: Style.font.body
-                  anchors.verticalCenter: parent.verticalCenter
-                }
-
-                Text {
-                  textFormat: Text.PlainText
-                  // nf-md-content_copy on answers, saying what Enter will do.
-                  text: row.kind === "answer" ? "󰆏" : (row.kind === "menu" || row.kind === "link" ? "›" : "")
-                  color: row.hasCursor ? root.selectedText : root.foreground
-                  opacity: (row.kind === "menu" || row.kind === "link" || row.kind === "answer") ? 0.36 : 0
-                  font.family: root.fontFamily
-                  font.pixelSize: Style.font.heading
-                  font.weight: Font.Normal
-                  anchors.verticalCenter: parent.verticalCenter
-                }
-              }
-
-              MouseArea {
-                id: mouseArea
-                anchors.fill: parent
-                hoverEnabled: true
-                cursorShape: Qt.PointingHandCursor
-                onEntered: root.selectFromPointer(row.index, row, {
-                  x: mouseArea.mouseX,
-                  y: mouseArea.mouseY
-                })
-                onPositionChanged: function(mouse) {
-                  root.selectFromPointer(row.index, row, mouse)
-                }
-                onClicked: {
-                  root.cursorActive = true
-                  root.selectedIndex = row.index
-                  root.activateIndex(row.index, true)
-                }
+              onActivated: function(index) {
+                root.cursorActive = true
+                root.selectedIndex = index
+                root.activateIndex(index, true)
               }
             }
           }
 
-          // Scroll scrims. The clipped row already marks the fold at rest;
-          // these keep both edges honest once the list has been scrolled,
-          // when content hides above the card top as well as below. Strength
-          // tracks the distance still hidden past each edge rather than
-          // animating on a clock, so a programmatic jump — wrapping from the
-          // last row back to the first — lands with the fade already applied.
-          Rectangle {
-            anchors.left: parent.left
-            anchors.right: parent.right
-            anchors.top: parent.top
-            height: Math.min(Style.space(28), parent.height / 2)
-            visible: opacity > 0
-            opacity: resultList.contentHeight > resultList.height
-              ? Math.max(0, Math.min(1, (resultList.contentY - resultList.originY) / height))
-              : 0
-            gradient: Gradient {
-              GradientStop { position: 0; color: root.background }
-              GradientStop { position: 1; color: Util.alpha(root.background, 0) }
-            }
+          ScrollFades {
+            anchors.fill: parent
+            list: resultList
+            background: root.background
           }
 
-          Rectangle {
-            anchors.left: parent.left
-            anchors.right: parent.right
-            anchors.bottom: parent.bottom
-            height: Math.min(Style.space(28), parent.height / 2)
-            visible: opacity > 0
-            opacity: resultList.contentHeight > resultList.height
-              ? Math.max(0, Math.min(1, (resultList.originY + resultList.contentHeight - resultList.height - resultList.contentY) / height))
-              : 0
-            gradient: Gradient {
-              GradientStop { position: 0; color: Util.alpha(root.background, 0) }
-              GradientStop { position: 1; color: root.background }
-            }
-          }
-
-          Column {
+          EmptyState {
             anchors.centerIn: parent
-            spacing: Style.space(8)
             visible: displayModel.count === 0 && root.mode !== "input"
-
-            Text {
-              text: "󰈉"
-              color: root.selectedText
-              opacity: 0.8
-              font.family: root.fontFamily
-              font.pixelSize: Style.font.displayLarge
-              horizontalAlignment: Text.AlignHCenter
-              width: Style.space(320)
-            }
-
-            Text {
-              textFormat: Text.PlainText
-              text: root.filterText ? "No matches for “" + root.filterText + "”" : "Nothing here yet"
-              color: root.foreground
-              opacity: 0.7
-              font.family: root.fontFamily
-              font.pixelSize: Style.font.title
-              horizontalAlignment: Text.AlignHCenter
-              width: Style.space(320)
-            }
+            appearance: menuAppearance
+            filterText: root.filterText
           }
         }
 

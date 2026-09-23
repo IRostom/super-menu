@@ -170,7 +170,8 @@ qalc -e -t 1
 
 | File | Role |
 |---|---|
-| `Menu.qml` | Cloned menu UI. Query-plugin hooks are marked in the source. |
+| `Menu.qml` | Cloned menu logic: IPC, menu tree, providers, dmenu, query plugins, layout sizing. Query-plugin hooks are marked in the source. |
+| `launcher/` | The menu's view: `Appearance.qml` (visual tokens), `LauncherState.qml` (state the views read), and the row, section rule, scroll fades and empty state. `Menu.qml` aliases the tokens and state under their old names. |
 | `MenuModel.js` | Cloned model helpers, plus the `copyText`/`actionArgv` roles. |
 | `QueryPlugins.js` | Registry, trigger gate, row normalization, JS compilation. |
 | `QueryBuiltins.js` | Descriptors for the shipped plugins. |
