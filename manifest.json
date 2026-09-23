@@ -1,10 +1,11 @@
 {
   "schemaVersion": 1,
-  "id": "irostom.menu",
-  "name": "My Omarchy menu",
-  "version": "1.6.0",
-  "author": "Omarchy",
-  "description": "Omarchy command menu with a query-plugin layer: calculator, unit and currency conversion, and user-written JS or command plugins",
+  "id": "io.github.irostom.super-menu",
+  "name": "Super Menu",
+  "version": "2.0.0",
+  "author": "Islam Rostom",
+  "license": "MIT",
+  "description": "A Raycast-style replacement for the Omarchy menu that answers what you type: calculator, unit and currency conversion, favorites, recents, an action panel, and user-written query plugins",
   "kinds": [
     "menu",
     "bar-widget"
@@ -14,8 +15,8 @@
     "barWidget": "BarWidget.qml"
   },
   "barWidget": {
-    "displayName": "My Omarchy menu",
-    "description": "Launches the Omarchy menu",
+    "displayName": "Super Menu",
+    "description": "Launches Super Menu",
     "category": "Compositor",
     "allowMultiple": false
   },

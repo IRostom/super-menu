@@ -50,7 +50,7 @@ Item {
 
   // Reports what the query-plugin layer thinks of a query, so the gate and
   // the plugin list can be checked without opening the menu:
-  //   omarchy-shell shell call irostom.menu selftest '{"query":"2+2"}'
+  //   omarchy-shell shell call io.github.irostom.super-menu selftest '{"query":"2+2"}'
   function selftest(payloadJson) {
     var payload = ({})
     try { payload = JSON.parse(payloadJson || "{}") } catch (e) { payload = ({}) }
@@ -144,8 +144,7 @@ Item {
   // first-party plugins, so only clones are affected -- the built-in menu's
   // Apps list works while an identical clone's is empty.
   //
-  // So own it instead of borrowing it, the same way irostom.logimouse owns
-  // its Solaar service rather than going through the shell's service bridge.
+  // So own it instead of borrowing it.
   // AppLibrary.qml and AppSearch.js are verbatim copies (see upstream/); they
   // reach everything they need through $OMARCHY_PATH and the omarchy-shell
   // CLI, so they run unmodified outside the shell tree.
@@ -1318,7 +1317,7 @@ Item {
 
   function mergeUserAnswerPlugins(rawJson) {
     if (!QueryPlugins.dynamicJsAvailable()) {
-      console.warn("irostom.menu: this QML engine will not build functions at runtime; user .js query plugins are disabled")
+      console.warn("super-menu: this QML engine will not build functions at runtime; user .js query plugins are disabled")
       return
     }
 
@@ -1345,7 +1344,7 @@ Item {
             pluginDir: root.pluginDir
           }), "user")
       } catch (e) {
-        console.warn("irostom.menu: query plugin " + name + " failed to load: " + e)
+        console.warn("super-menu: query plugin " + name + " failed to load: " + e)
         continue
       }
       if (!plugin) continue
@@ -1403,7 +1402,7 @@ Item {
         try {
           rows = rows.concat(QueryPlugins.normalizeRows(plugin.rows(match), plugin, match))
         } catch (e) {
-          console.warn("irostom.menu: query plugin " + plugin.id + " threw: " + e)
+          console.warn("super-menu: query plugin " + plugin.id + " threw: " + e)
           plugin.disabled = true
         }
       } else {
@@ -1489,7 +1488,7 @@ Item {
     plugin.failures += 1
     if (plugin.failures < 3) return
     plugin.disabled = true
-    console.warn("irostom.menu: query plugin " + plugin.id + " disabled after 3 consecutive failures")
+    console.warn("super-menu: query plugin " + plugin.id + " disabled after 3 consecutive failures")
   }
 
   function applyAnswer(row) {

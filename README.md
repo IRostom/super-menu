@@ -1,13 +1,14 @@
-# irostom.menu
+# Super Menu
 
-A clone of Omarchy's built-in menu (`omarchy.menu`) that can answer the query
-you type, not just search for it.
+A Raycast-style replacement for Omarchy's built-in menu (`omarchy.menu`) that
+can answer what you type, not just search for it.
 
-Everything the stock menu does still works — the JSONC menu tree, installed
+Everything the stock menu does still works: the JSONC menu tree, installed
 apps, scored search, `provider` submenus, `when:`/`checked:` guards, and the
-dmenu mode other Omarchy scripts rely on. On top of that it adds **query
-plugins**: small extensions that turn the typed text into a result row pinned
-above the search results.
+dmenu mode other Omarchy scripts rely on. On top of that it adds a fixed
+launcher window, Favorites and Suggestions, an action panel, an app detail
+pane, and **query plugins**: small extensions that turn the typed text into a
+result row pinned above the search results.
 
 ```
 2^10 + 5*3        ->  3072
@@ -17,6 +18,56 @@ above the search results.
 
 Enter copies the result. The clipboard gets full precision even though the row
 shows a rounded value.
+
+## Install
+
+```bash
+omarchy plugin add https://github.com/IRostom/super-menu.git --enable
+```
+
+Super Menu declares `omarchy.clonedFrom: "omarchy.menu"`. Enabling it
+switches the built-in menu off and puts Super Menu's button where the
+built-in one was in the bar. The shell also sends every call aimed at the
+built-in menu to the enabled replacement (`PluginRegistry.resolveEnabledId()`),
+so **SUPER+Space needs no Hyprland change**: `omarchy-menu toggle` and every
+dmenu caller reach Super Menu once it is enabled.
+
+To update later:
+
+```bash
+omarchy plugin update io.github.irostom.super-menu
+```
+
+### Requirements
+
+- Omarchy Quattro (4.x) with the Quickshell-based Omarchy shell.
+- `qalc` (libqalculate) for the built-in calculator and converter.
+- `wl-copy` (wl-clipboard) for copying results.
+
+Both ship with Omarchy. Without `qalc` the calculator stays silent, and
+everything else keeps working.
+
+## Remove
+
+```bash
+omarchy plugin remove io.github.irostom.super-menu
+```
+
+Removing it disables Super Menu first, which switches the built-in
+`omarchy.menu` back on and returns it to its place in the bar. To keep Super
+Menu installed but go back to the stock menu, use
+`omarchy plugin disable io.github.irostom.super-menu` instead.
+
+Super Menu writes only to these paths, all outside `~/.config`. Delete them
+too for a clean removal:
+
+- `$XDG_STATE_HOME/omarchy/menu-history.json`: your Favorites and recent
+  launches.
+- `$XDG_STATE_HOME/omarchy/menu-qalc/`: the calculator's private `qalc`
+  config.
+
+Query plugins you wrote in `~/.config/omarchy/menu-plugins/` are yours and are
+left alone.
 
 ## The launcher window
 
@@ -104,23 +155,6 @@ title (Calculator).
 
 Hovering a row highlights it but does not select it; Enter always acts on the
 keyboard selection. Click to run a row.
-
-## Installing
-
-The clone declares `omarchy.clonedFrom: "omarchy.menu"`, and the shell routes
-every call aimed at the built-in id to the enabled clone
-(`PluginRegistry.resolveEnabledId()`). So **SUPER+Space needs no Hyprland
-change** — `omarchy-menu toggle` and every dmenu caller reach this plugin
-automatically once it is enabled.
-
-```bash
-ln -s ~/Work/omarchy-dotfiles/plugins/irostom.menu ~/.config/omarchy/plugins/irostom.menu
-omarchy-shell shell rescanPlugins
-omarchy plugin enable irostom.menu
-```
-
-Requires `qalc` (libqalculate) for the built-in calculator, and `wl-copy` for
-copying results. Both ship with Omarchy.
 
 ## Writing a query plugin
 
@@ -267,7 +301,7 @@ qalc -e -t 1
 
 | File | Role |
 |---|---|
-| `Menu.qml` | Cloned menu logic: IPC, menu tree, providers, dmenu, query plugins, layout sizing. Query-plugin hooks are marked in the source. |
+| `Menu.qml` | Menu logic, cloned from `omarchy.menu`: IPC, menu tree, providers, dmenu, query plugins, layout sizing. Query-plugin hooks are marked in the source. |
 | `launcher/` | The menu's view: `Appearance.qml` (visual tokens, window size), `LauncherState.qml` (state the views read), `SearchBar.qml`, `ListRow.qml` + `IconTile.qml`, `SectionHeader.qml`, `Footer.qml` + `FooterButton.qml`, `ActionPanel.qml`, `Keycaps.qml`, `AnswerCard.qml` + `Badge.qml`, `LoadingBar.qml`, `DetailPane.qml`, scroll fades and empty state. `Menu.qml` aliases the tokens and state under their old names. |
 | `MenuModel.js` | Cloned model helpers, plus the `copyText`/`actionArgv` roles. |
 | `QueryPlugins.js` | Registry, trigger gate, row normalization, JS compilation. |
@@ -278,7 +312,7 @@ qalc -e -t 1
 | `query-plugins/calc.sh` | The calculator/converter. |
 | `AppLibrary.qml`, `AppSearch.js` | Verbatim copies of the shell's own — see below. |
 | `examples/` | Sample query plugins. Not loaded; copy them to use them. |
-| `upstream/` | Pristine originals for 3-way merges on Omarchy updates. |
+| `upstream/` | Pristine originals for 3-way merges on Omarchy updates. Reference only; nothing loads them. The original manifest is kept as `manifest.json.orig`, so the repository holds exactly one plugin manifest. |
 
 ### Why the app library is vendored
 
@@ -290,16 +324,14 @@ ever re-injects them. `isEnabled()` short-circuits to `true` for first-party
 plugins, so only clones are affected: the built-in menu's Apps list works while
 an identical clone's is empty.
 
-So this plugin owns its app library instead of borrowing one, the same way
-`irostom.logimouse` owns its Solaar service rather than going through the
-shell's service bridge. `AppLibrary.qml` and `AppSearch.js` are unmodified
+So this plugin owns its app library instead of borrowing one. `AppLibrary.qml` and `AppSearch.js` are unmodified
 copies; they reach everything they need through `$OMARCHY_PATH` and the
 `omarchy-shell` CLI, so they run fine outside the shell tree.
 
 ## Diagnostics
 
 ```bash
-omarchy-shell shell call irostom.menu selftest '{"query":"100 usd to eur"}'
+omarchy-shell shell call io.github.irostom.super-menu selftest '{"query":"100 usd to eur"}'
 ```
 
 Reports which plugins loaded, whether the engine allows runtime JS compilation,
@@ -317,3 +349,12 @@ diff3 -m Menu.qml upstream/Menu.qml $U/Menu.qml > Menu.qml.merged
 ```
 
 Review, replace, then refresh `upstream/` and bump `version` in `manifest.json`.
+Copy the new upstream manifest in as `upstream/manifest.json.orig`, never as
+`manifest.json`: the marketplace rejects a repository with a second plugin
+manifest.
+
+## License
+
+MIT. See [LICENSE](LICENSE). Super Menu is derived from Omarchy's built-in
+menu, which is MIT-licensed by David Heinemeier Hansson. Its notice is included
+in the same file.

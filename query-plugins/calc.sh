@@ -1,5 +1,5 @@
 #!/bin/bash
-# Calculator / unit / currency answers for the irostom.menu query-plugin layer.
+# Calculator / unit / currency answers for the Super Menu query-plugin layer.
 #
 # Reads the query from $OMARCHY_QUERY and prints one JSON row on stdout, or
 # nothing at all when the query has no sensible answer. Exiting 0 with empty
