@@ -3,6 +3,8 @@
 A Raycast-style replacement for Omarchy's built-in menu (`omarchy.menu`) that
 can answer what you type, not just search for it.
 
+![Super Menu open over the desktop](preview.png)
+
 Everything the stock menu does still works: the JSONC menu tree, installed
 apps, scored search, `provider` submenus, `when:`/`checked:` guards, and the
 dmenu mode other Omarchy scripts rely on. On top of that it adds a fixed
