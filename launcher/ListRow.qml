@@ -2,9 +2,12 @@ import QtQuick
 import qs.Commons
 import qs.Ui
 
-// One result row: icon (glyph or app icon), label, optional detail line and
-// a trailing hint for what Enter does. Model roles arrive as required
-// properties; everything else is passed in by the list.
+// One result row, laid out like vicinae's ListItemDelegate: icon tile, title
+// with its subtitle inline on the same baseline, and a type label on the
+// right. Query-plugin answers keep a taller layout with the value large.
+//
+// Selection (keyboard) and hover (pointer) are separate fills: pointing at a
+// row highlights it without moving the cursor that Enter acts on.
 BorderSurface {
   id: row
 
@@ -14,144 +17,154 @@ BorderSurface {
   required property string icon
   required property string iconFont
   required property string appIcon
-  required property string appId
   required property string label
-  required property string target
   required property string detail
-  required property string path
-  required property string action
-  required property string actionArgv
-  required property string copyText
-  required property int childCount
 
   required property Appearance appearance
   required property LauncherState launcher
   property var appLibrary: null
 
-  // The pointer moved over the row, or it was clicked. The owner decides
-  // whether that moves the cursor or runs the row.
+  // The pointer moved over the row or left it, or the row was clicked. The
+  // owner decides what that does to hover and selection.
   signal pointerMoved(int index, var item, var mouse)
+  signal pointerLeft(int index)
   signal activated(int index)
 
   readonly property bool hasCursor: row.launcher.cursorActive && row.index === row.launcher.selectedIndex
+  readonly property bool hovered: !row.hasCursor && row.index === row.launcher.hoveredIndex && mouseArea.containsMouse
   readonly property bool isApp: row.kind === "app"
-  readonly property bool hasIcon: row.icon.length > 0 || row.isApp
+  readonly property bool isAnswer: row.kind === "answer"
+  readonly property color textColor: row.hasCursor ? row.appearance.selectedText : row.appearance.foreground
+  readonly property string accessory: {
+    if (row.kind === "app") return "Application"
+    if (row.kind === "menu" || row.kind === "link") return "Menu"
+    if (row.kind === "action") return "Command"
+    return ""
+  }
 
   width: ListView.view.width
-  height: row.appearance.rowHeightFor(row.detail, row.kind, row.launcher.filterText || row.launcher.dmenuActive)
+  height: row.appearance.rowHeightFor(row.kind)
   radius: row.appearance.cornerRadius
-  color: row.hasCursor ? row.appearance.selectedBackground : "transparent"
+  color: row.hasCursor ? row.appearance.selectedBackground : (row.hovered ? row.appearance.hoverBackground : "transparent")
   borderSpec: row.hasCursor ? row.appearance.selectedBorderSpec : Border.none()
 
-  Rectangle {
-    visible: false
-    width: Style.space(4)
-    height: parent.height - Style.space(18)
-    radius: Math.min(row.appearance.cornerRadius, Style.space(4))
-    color: row.appearance.selectedBackground
+  IconTile {
+    id: iconTile
+    appearance: row.appearance
     anchors.left: parent.left
-    anchors.leftMargin: row.appearance.rowReservedBorderLeft + Style.space(8)
+    anchors.leftMargin: row.appearance.rowReservedBorderLeft + row.appearance.rowPaddingX
     anchors.verticalCenter: parent.verticalCenter
+    glyph: row.isApp ? "" : row.icon
+    glyphFont: row.iconFont
+    imageSource: row.isApp && row.appLibrary ? row.appLibrary.iconSource(row.appIcon) : ""
+    hue: row.appearance.hueFor(row.itemId)
+  }
+
+  // --- ordinary rows: title · subtitle ······ accessory ----------------
+  Item {
+    id: textRow
+    visible: !row.isAnswer
+    anchors.left: iconTile.right
+    anchors.leftMargin: Style.space(10)
+    anchors.right: accessoryText.left
+    anchors.rightMargin: Style.space(10)
+    anchors.verticalCenter: parent.verticalCenter
+    height: titleText.implicitHeight
+
+    readonly property real gap: Style.space(8)
+    // The subtitle may claim up to half the width before the title starts
+    // eliding; after that the title keeps the rest.
+    readonly property real subtitleReserved: subtitleText.text ? Math.min(subtitleText.implicitWidth + gap, width * 0.5) : 0
+
+    Text {
+      id: titleText
+      anchors.left: parent.left
+      anchors.verticalCenter: parent.verticalCenter
+      width: Math.min(implicitWidth, textRow.width - textRow.subtitleReserved)
+      textFormat: Text.PlainText
+      text: row.label
+      color: row.textColor
+      font.family: row.appearance.fontFamily
+      font.pixelSize: row.appearance.rowFontSize
+      elide: Text.ElideRight
+      maximumLineCount: 1
+    }
+
+    Text {
+      id: subtitleText
+      anchors.left: titleText.right
+      anchors.leftMargin: textRow.gap
+      anchors.baseline: titleText.baseline
+      width: Math.max(0, Math.min(implicitWidth, textRow.width - titleText.width - textRow.gap))
+      textFormat: Text.PlainText
+      text: row.detail
+      color: row.hasCursor ? Util.alpha(row.appearance.selectedText, 0.6) : row.appearance.muted
+      font.family: row.appearance.fontFamily
+      font.pixelSize: row.appearance.rowFontSize
+      elide: Text.ElideRight
+      maximumLineCount: 1
+    }
   }
 
   Text {
-    id: iconText
+    id: accessoryText
+    visible: !row.isAnswer
+    anchors.right: parent.right
+    anchors.rightMargin: row.appearance.rowReservedBorderRight + row.appearance.rowPaddingX
+    anchors.verticalCenter: parent.verticalCenter
     textFormat: Text.PlainText
-    visible: row.hasIcon && !row.isApp
-    text: row.icon
-    color: row.hasCursor ? row.appearance.selectedText : row.appearance.foreground
-    font.family: row.iconFont.length > 0 ? row.iconFont : row.appearance.fontFamily
-    font.pixelSize: Style.font.iconLarge
-    width: Style.space(36)
-    horizontalAlignment: Text.AlignHCenter
-    verticalAlignment: Text.AlignVCenter
-    anchors.left: parent.left
-    anchors.leftMargin: row.appearance.rowReservedBorderLeft + Style.space(8)
-    y: contentColumn.y + labelText.y + (labelText.height - height) / 2
+    text: row.accessory
+    color: row.appearance.muted
+    font.family: row.appearance.fontFamily
+    font.pixelSize: row.appearance.accessoryFontSize
   }
 
-  Image {
-    id: appIconImage
-    visible: row.isApp
-    width: Style.font.iconLarge
-    height: Style.font.iconLarge
-    fillMode: Image.PreserveAspectFit
-    // Decode at physical pixels — a logical-size decode leaves
-    // PNG icons upscaled and blurry on HiDPI displays.
-    sourceSize.width: width * Screen.devicePixelRatio
-    sourceSize.height: height * Screen.devicePixelRatio
-    source: row.isApp && row.appLibrary ? row.appLibrary.iconSource(row.appIcon) : ""
-    asynchronous: true
-    anchors.left: parent.left
-    anchors.leftMargin: row.appearance.rowReservedBorderLeft + Style.space(8) + (Style.space(36) - width) / 2
-    y: contentColumn.y + labelText.y + (labelText.height - height) / 2
-  }
-
+  // --- answers: the value large, what it answers underneath ------------
   Column {
-    id: contentColumn
-    anchors.left: row.hasIcon ? iconText.right : parent.left
-    anchors.leftMargin: row.hasIcon ? Style.space(6) : row.appearance.rowReservedBorderLeft + Style.space(18)
-    anchors.right: trail.left
-    anchors.rightMargin: Style.space(6)
+    visible: row.isAnswer
+    anchors.left: iconTile.right
+    anchors.leftMargin: Style.space(10)
+    anchors.right: copyHint.left
+    anchors.rightMargin: Style.space(10)
     anchors.verticalCenter: parent.verticalCenter
     spacing: Style.space(3)
 
     Text {
-      id: labelText
-      textFormat: Text.PlainText
       width: parent.width
+      textFormat: Text.PlainText
       text: row.label
-      color: row.hasCursor ? row.appearance.selectedText : row.appearance.foreground
+      color: row.textColor
       font.family: row.appearance.fontFamily
       // An answer is a value, not a name. Give it room.
-      font.pixelSize: row.kind === "answer" ? Style.font.display : Style.font.heading
+      font.pixelSize: Style.font.display
       font.weight: Font.Medium
       elide: Text.ElideRight
     }
 
     Text {
-      textFormat: Text.PlainText
       width: parent.width
+      visible: row.detail.length > 0
+      textFormat: Text.PlainText
       text: row.detail
-      visible: (row.launcher.filterText || row.kind === "dmenu" || row.kind === "answer") && row.detail.length > 0
-      color: row.appearance.foreground
-      opacity: 0.52
+      color: row.appearance.muted
       font.family: row.appearance.fontFamily
       font.pixelSize: Style.font.bodySmall
       elide: Text.ElideRight
     }
   }
 
-  Row {
-    id: trail
-    width: Style.space(14)
+  Text {
+    id: copyHint
+    visible: row.isAnswer
     anchors.right: parent.right
-    anchors.rightMargin: row.appearance.rowReservedBorderRight + Style.space(8)
-    y: contentColumn.y + labelText.y + (labelText.height - height) / 2
-    spacing: 0
-
-    Text {
-      textFormat: Text.PlainText
-      visible: false
-      text: row.childCount
-      color: row.appearance.foreground
-      opacity: 0.45
-      font.family: row.appearance.fontFamily
-      font.pixelSize: Style.font.body
-      anchors.verticalCenter: parent.verticalCenter
-    }
-
-    Text {
-      textFormat: Text.PlainText
-      // nf-md-content_copy on answers, saying what Enter will do.
-      text: row.kind === "answer" ? "󰆏" : (row.kind === "menu" || row.kind === "link" ? "›" : "")
-      color: row.hasCursor ? row.appearance.selectedText : row.appearance.foreground
-      opacity: (row.kind === "menu" || row.kind === "link" || row.kind === "answer") ? 0.36 : 0
-      font.family: row.appearance.fontFamily
-      font.pixelSize: Style.font.heading
-      font.weight: Font.Normal
-      anchors.verticalCenter: parent.verticalCenter
-    }
+    anchors.rightMargin: row.appearance.rowReservedBorderRight + row.appearance.rowPaddingX
+    anchors.verticalCenter: parent.verticalCenter
+    textFormat: Text.PlainText
+    // nf-md-content_copy, saying what Enter will do.
+    text: "󰆏"
+    color: row.appearance.muted
+    font.family: row.appearance.fontFamily
+    font.pixelSize: Style.font.heading
   }
 
   MouseArea {
@@ -166,6 +179,7 @@ BorderSurface {
     onPositionChanged: function(mouse) {
       row.pointerMoved(row.index, row, mouse)
     }
+    onExited: row.pointerLeft(row.index)
     onClicked: row.activated(row.index)
   }
 }

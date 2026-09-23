@@ -8,6 +8,7 @@ import qs.Ui
 import "MenuModel.js" as MenuModel
 import "QueryPlugins.js" as QueryPlugins
 import "QueryBuiltins.js" as QueryBuiltins
+import "Sections.js" as Sections
 import "launcher"
 
 Item {
@@ -157,6 +158,8 @@ Item {
   // the logic below reading and writing them under their old names.
   Appearance { id: menuAppearance }
   LauncherState { id: menuState }
+  MenuHistory { id: menuHistory }
+  property alias hoveredIndex: menuState.hoveredIndex
   property alias background: menuAppearance.background
   property alias foreground: menuAppearance.foreground
   property alias border: menuAppearance.border
@@ -172,11 +175,8 @@ Item {
   property alias contentMargin: menuAppearance.contentMargin
   property alias contentSpacing: menuAppearance.contentSpacing
   property alias baseRowHeight: menuAppearance.baseRowHeight
-  property alias detailRowHeight: menuAppearance.detailRowHeight
   property alias rowPeek: menuAppearance.rowPeek
   property alias rowSpacing: menuAppearance.rowSpacing
-  property alias dividerHeight: menuAppearance.dividerHeight
-  property bool searchDivider: false
   property int layoutSerial: 0
   // The launcher is a fixed window. dmenu callers size their own picker, so
   // dmenu keeps its requested width and grows downward from the same top line.
@@ -184,7 +184,7 @@ Item {
   readonly property int cardTop: Math.max(Style.gapsOut, Math.round((panel.height - menuAppearance.windowHeight) / 3))
   // Everything in the card that is not rows: border, search bar, the rule
   // under it, and the list's own top and bottom padding.
-  readonly property int cardChrome: Math.round(card.borderTop + card.borderBottom) + menuAppearance.searchBarHeight + Style.spacing.hairline + root.contentSpacing + root.contentMargin
+  readonly property int cardChrome: Math.round(card.borderTop + card.borderBottom) + menuAppearance.searchBarHeight + Style.spacing.hairline + root.contentSpacing + menuAppearance.listInset
   property int visibleRowsHeight: root.dmenuActive
     ? dmenuRowListHeight(layoutSerial, displayModel.count, filterText)
     : Math.max(0, root.cardHeight - root.cardChrome)
@@ -219,10 +219,8 @@ Item {
     Util.execDetached(command)
   }
 
-  // Menu rows only surface their detail while a search is narrowing them;
-  // dmenu rows carry caller-supplied subtext that must always be visible.
   function rowHeightForDetail(detail, kind) {
-    return menuAppearance.rowHeightFor(detail, kind, root.filterText || root.dmenuActive)
+    return menuAppearance.rowHeightFor(kind)
   }
 
   // Height a dmenu card can devote to rows before running off the screen.
@@ -561,7 +559,6 @@ Item {
 
   function rebuildDmenuDisplay() {
     displayModel.clear()
-    root.searchDivider = false
 
     if (root.mode === "input") {
       layoutSerial += 1
@@ -610,6 +607,35 @@ Item {
     })
   }
 
+  // The root with no query: Favorites and Suggestions (recent launches) from
+  // menuHistory above the top-level menus. Rows that no longer exist or whose
+  // `when:` guard hides them are skipped, so stale history never shows.
+  readonly property int maxSuggestions: 5
+
+  function historyRow(id) {
+    var entry = root.item(id)
+    if (!entry || entry.id === "root" || !root.isVisible(entry)) return null
+    return root.displayRow(entry, root.parentPathFor(entry.id), 0)
+  }
+
+  function rootSections(menuRows) {
+    var favoriteRows = []
+    for (var i = 0; i < menuHistory.favorites.length; i++) {
+      var favorite = root.historyRow(menuHistory.favorites[i])
+      if (favorite) favoriteRows.push(favorite)
+    }
+
+    var suggestionRows = []
+    var recentIds = menuHistory.recentIds()
+    for (var j = 0; j < recentIds.length && suggestionRows.length < root.maxSuggestions; j++) {
+      if (menuHistory.isFavorite(recentIds[j])) continue
+      var recent = root.historyRow(recentIds[j])
+      if (recent) suggestionRows.push(recent)
+    }
+
+    return Sections.root(favoriteRows, suggestionRows, menuRows)
+  }
+
   function rebuildDisplay() {
     if (root.dmenuActive) {
       root.rebuildDmenuDisplay()
@@ -630,7 +656,6 @@ Item {
     root.activeMenu = active
     var rows = []
     var query = root.filterText.trim()
-    root.searchDivider = false
 
     if (query) {
       var currentRows = []
@@ -655,11 +680,7 @@ Item {
 
       currentRows.sort(searchSort)
       drilldownRows.sort(searchSort)
-      root.searchDivider = currentRows.length > 0 && drilldownRows.length > 0
-      if (root.searchDivider) {
-        for (var d = 0; d < drilldownRows.length; d++) drilldownRows[d].section = "drilldown"
-      }
-      rows = currentRows.concat(drilldownRows)
+      rows = Sections.search(currentRows, drilldownRows, active === "root")
     } else {
       for (var j = 0; j < root.itemOrder.length; j++) {
         var child = root.item(root.itemOrder[j])
@@ -685,7 +706,14 @@ Item {
       }
     }
 
-    if (query && root.answerRows.length > 0) rows = root.answerRows.concat(rows)
+    if (!query && active === "root") rows = root.rootSections(rows)
+
+    if (query && root.answerRows.length > 0) {
+      rows = Sections.answers(root.answerRows, function(pluginId) {
+        var plugin = root.pluginById(pluginId)
+        return plugin ? plugin.title : ""
+      }).concat(rows)
+    }
 
     for (var k = 0; k < rows.length; k++) displayModel.append(rows[k])
     layoutSerial += 1
@@ -865,6 +893,7 @@ Item {
     if (row.kind === "menu" || row.kind === "link") {
       root.setActiveMenu(row.target || row.itemId, true, fromPointer)
     } else if (row.kind === "app") {
+      menuHistory.recordLaunch(row.itemId)
       var appId = row.appId
       var label = row.label
       applySerial = requestSerial
@@ -872,6 +901,7 @@ Item {
       filterText = ""
       if (root.appLibrary) root.appLibrary.launch(appId, label)
     } else {
+      menuHistory.recordLaunch(row.itemId)
       root.applySelected(row.itemId, row.action)
     }
   }
@@ -1005,13 +1035,19 @@ Item {
 
   function disarmPointer() {
     pointerGate.reset()
+    root.hoveredIndex = -1
   }
 
-  function selectFromPointer(index, item, mouse) {
+  // Hover highlights the row under a pointer that really moved; it does not
+  // select it. Rows sliding under a still pointer (a rebuild, a scroll) are
+  // filtered out by pointerGate.
+  function hoverFromPointer(index, item, mouse) {
     if (!pointerGate.moved(item, mouse)) return
-    root.cursorActive = true
-    root.cursorMoved = true
-    root.selectedIndex = index
+    root.hoveredIndex = index
+  }
+
+  function clearHover(index) {
+    if (root.hoveredIndex === index) root.hoveredIndex = -1
   }
 
   Process {
@@ -1555,8 +1591,8 @@ Item {
         }
 
         Item {
-          x: root.contentMargin
-          width: parent.width - root.contentMargin * 2
+          x: menuAppearance.listInset
+          width: parent.width - menuAppearance.listInset * 2
           height: root.visibleRowsHeight
 
           ListView {
@@ -1569,9 +1605,8 @@ Item {
 
             section.property: "section"
             section.criteria: ViewSection.FullString
-            section.delegate: SectionRule {
+            section.delegate: SectionHeader {
               appearance: menuAppearance
-              answersPresent: root.answerRows.length > 0
             }
 
             delegate: ListRow {
@@ -1579,7 +1614,10 @@ Item {
               launcher: menuState
               appLibrary: root.appLibrary
               onPointerMoved: function(index, item, mouse) {
-                root.selectFromPointer(index, item, mouse)
+                root.hoverFromPointer(index, item, mouse)
+              }
+              onPointerLeft: function(index) {
+                root.clearHover(index)
               }
               onActivated: function(index) {
                 root.cursorActive = true

@@ -38,6 +38,30 @@ IME. Keys that drive the list are taken before the input sees them:
 | Ctrl+U | Clear the query |
 | Delete | With the text cursor at the end, uninstall the selected app |
 
+### Rows and sections
+
+Rows follow vicinae's layout: an icon, the title with its subtitle (the
+parent path, or the item's description) inline, and a type label on the
+right: Application, Command or Menu. Glyph icons sit on a tile tinted with
+their top-level menu's color, taken from the theme's `colors.toml` (`blue`,
+`yellow`, `orange`, ...), so the tiles change with `omarchy theme set`.
+
+The root, with nothing typed, shows **Favorites** (pinned rows), then
+**Suggestions** (the five most recent launches not already pinned), then the
+top-level **Menus**. Launching an app or command records it. Both lists live
+in `$XDG_STATE_HOME/omarchy/menu-history.json`, as item ids:
+
+```json
+{ "favorites": ["style.background"], "recents": [{ "id": "apps.Alacritty", "at": 1790000000000 }] }
+```
+
+A search groups its rows under **Results**, with **Menus** or **In submenus**
+split out when both kinds match, and query-plugin answers under the plugin's
+title (Calculator).
+
+Hovering a row highlights it but does not select it; Enter always acts on the
+keyboard selection. Click to run a row.
+
 ## Installing
 
 The clone declares `omarchy.clonedFrom: "omarchy.menu"`, and the shell routes
@@ -191,10 +215,12 @@ qalc -e -t 1
 | File | Role |
 |---|---|
 | `Menu.qml` | Cloned menu logic: IPC, menu tree, providers, dmenu, query plugins, layout sizing. Query-plugin hooks are marked in the source. |
-| `launcher/` | The menu's view: `Appearance.qml` (visual tokens, window size), `LauncherState.qml` (state the views read), `SearchBar.qml`, and the row, section rule, scroll fades and empty state. `Menu.qml` aliases the tokens and state under their old names. |
+| `launcher/` | The menu's view: `Appearance.qml` (visual tokens, window size), `LauncherState.qml` (state the views read), `SearchBar.qml`, `ListRow.qml` + `IconTile.qml`, `SectionHeader.qml`, scroll fades and empty state. `Menu.qml` aliases the tokens and state under their old names. |
 | `MenuModel.js` | Cloned model helpers, plus the `copyText`/`actionArgv` roles. |
 | `QueryPlugins.js` | Registry, trigger gate, row normalization, JS compilation. |
 | `QueryBuiltins.js` | Descriptors for the shipped plugins. |
+| `Sections.js` | Section labels for the list: root, search, answers. |
+| `MenuHistory.qml` | Favorites and recent launches, stored in `$XDG_STATE_HOME/omarchy/menu-history.json`. |
 | `query-plugins/calc.sh` | The calculator/converter. |
 | `AppLibrary.qml`, `AppSearch.js` | Verbatim copies of the shell's own — see below. |
 | `examples/` | Sample query plugins. Not loaded; copy them to use them. |

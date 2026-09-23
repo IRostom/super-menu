@@ -12,6 +12,9 @@ QtObject {
   property string filterText: ""
   property int selectedIndex: 0
   property bool cursorActive: false
+  // The row under a pointer that has actually moved, or -1. Separate from
+  // selectedIndex: hover highlights a row, it does not select it.
+  property int hoveredIndex: -1
   property var answerRows: []
   property bool deleteConfirmOpen: false
 }
