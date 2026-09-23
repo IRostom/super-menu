@@ -18,6 +18,26 @@ above the search results.
 Enter copies the result. The clipboard gets full precision even though the row
 shows a rounded value.
 
+## The launcher window
+
+The menu opens as a fixed 770 × 480 window (scaled with the shell's font
+size), its top a third of the way down the screen, so typing never moves or
+resizes it. Corners follow the system `corner-radius`. dmenu pickers keep the
+width their caller asks for and grow downward from the same top line.
+
+The search field is a real text input: it has a cursor, selection, paste and
+IME. Keys that drive the list are taken before the input sees them:
+
+| Key | Does |
+|---|---|
+| ↑ ↓, PgUp PgDn | Move the selection |
+| Enter | Run the selected row |
+| → | Same as Enter, once the text cursor is at the end of the query |
+| Esc | Clear the query; with no query, close |
+| Backspace, ← | With no query, go back to the parent menu |
+| Ctrl+U | Clear the query |
+| Delete | With the text cursor at the end, uninstall the selected app |
+
 ## Installing
 
 The clone declares `omarchy.clonedFrom: "omarchy.menu"`, and the shell routes
@@ -171,7 +191,7 @@ qalc -e -t 1
 | File | Role |
 |---|---|
 | `Menu.qml` | Cloned menu logic: IPC, menu tree, providers, dmenu, query plugins, layout sizing. Query-plugin hooks are marked in the source. |
-| `launcher/` | The menu's view: `Appearance.qml` (visual tokens), `LauncherState.qml` (state the views read), and the row, section rule, scroll fades and empty state. `Menu.qml` aliases the tokens and state under their old names. |
+| `launcher/` | The menu's view: `Appearance.qml` (visual tokens, window size), `LauncherState.qml` (state the views read), `SearchBar.qml`, and the row, section rule, scroll fades and empty state. `Menu.qml` aliases the tokens and state under their old names. |
 | `MenuModel.js` | Cloned model helpers, plus the `copyText`/`actionArgv` roles. |
 | `QueryPlugins.js` | Registry, trigger gate, row normalization, JS compilation. |
 | `QueryBuiltins.js` | Descriptors for the shipped plugins. |

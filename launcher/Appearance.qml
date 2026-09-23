@@ -23,8 +23,19 @@ QtObject {
   readonly property real rowReservedBorderRight: Border.right(selectedBorderSpec)
   readonly property int cornerRadius: Style.cornerRadius
 
+  // The launcher window. A fixed size, so typing never moves or resizes it;
+  // only the list inside changes. Its top sits a third of the way down the
+  // screen, the way Raycast and vicinae place it.
+  property int windowWidth: Style.space(770)
+  property int windowHeight: Style.space(480)
+  property int searchBarHeight: Style.space(60)
+  property int searchFontSize: Math.round(Style.font.heading * 1.2)
+  property color divider: Util.alpha(foreground, 0.1)
+  property color shadow: Qt.rgba(0, 0, 0, 0.35)
+  property int shadowBlur: Style.space(28)
+  property int shadowOffset: Style.space(6)
+
   property int contentMargin: Style.spacing.panelPadding
-  property int headerHeight: Math.max(Style.space(34), Style.font.title + Style.spacing.controlPaddingY * 2)
   property int contentSpacing: Style.spacing.md
   property int baseRowHeight: Math.max(Style.space(50), Style.font.body + Style.spacing.rowPaddingX * 2)
   property int detailRowHeight: Math.max(Style.space(58), Style.font.body + Style.font.caption + Style.spacing.rowPaddingX * 2)

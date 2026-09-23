@@ -2,6 +2,7 @@ import Quickshell
 import Quickshell.Io
 import Quickshell.Wayland
 import QtQuick
+import QtQuick.Effects
 import qs.Commons
 import qs.Ui
 import "MenuModel.js" as MenuModel
@@ -169,7 +170,6 @@ Item {
   property alias rowReservedBorderRight: menuAppearance.rowReservedBorderRight
   property alias cornerRadius: menuAppearance.cornerRadius
   property alias contentMargin: menuAppearance.contentMargin
-  property alias headerHeight: menuAppearance.headerHeight
   property alias contentSpacing: menuAppearance.contentSpacing
   property alias baseRowHeight: menuAppearance.baseRowHeight
   property alias detailRowHeight: menuAppearance.detailRowHeight
@@ -178,11 +178,19 @@ Item {
   property alias dividerHeight: menuAppearance.dividerHeight
   property bool searchDivider: false
   property int layoutSerial: 0
-  property int cardWidth: Math.min(root.dmenuActive ? Style.space(root.dmenuWidth) : ((root.activeMenu === "trigger.capture.screenrecord" || root.activeMenu === "style.font") ? Style.space(520) : Style.space(300)), panel.width - Style.gapsOut * 2)
-  property int visibleRowsHeight: root.dmenuActive ? dmenuRowListHeight(layoutSerial, displayModel.count, filterText) : rowListHeight(layoutSerial, displayModel.count, filterText, searchDivider)
+  // The launcher is a fixed window. dmenu callers size their own picker, so
+  // dmenu keeps its requested width and grows downward from the same top line.
+  property int cardWidth: Math.min(root.dmenuActive ? Style.space(root.dmenuWidth) : menuAppearance.windowWidth, panel.width - Style.gapsOut * 2)
+  readonly property int cardTop: Math.max(Style.gapsOut, Math.round((panel.height - menuAppearance.windowHeight) / 3))
+  // Everything in the card that is not rows: border, search bar, the rule
+  // under it, and the list's own top and bottom padding.
+  readonly property int cardChrome: Math.round(card.borderTop + card.borderBottom) + menuAppearance.searchBarHeight + Style.spacing.hairline + root.contentSpacing + root.contentMargin
+  property int visibleRowsHeight: root.dmenuActive
+    ? dmenuRowListHeight(layoutSerial, displayModel.count, filterText)
+    : Math.max(0, root.cardHeight - root.cardChrome)
   property int cardHeight: root.dmenuActive
-    ? Math.min(contentMargin * 2 + headerHeight + (mode === "input" ? 0 : contentSpacing + visibleRowsHeight), panel.height - Style.gapsOut * 2)
-    : Math.min(contentMargin * 2 + headerHeight + contentSpacing + visibleRowsHeight, panel.height - Style.gapsOut * 2)
+    ? Math.min(root.mode === "input" ? Math.round(card.borderTop + card.borderBottom) + menuAppearance.searchBarHeight : root.cardChrome + visibleRowsHeight, panel.height - Style.gapsOut - root.cardTop)
+    : Math.min(menuAppearance.windowHeight, panel.height - Style.gapsOut - root.cardTop)
 
   function finishRequest(selection) {
     if (!root.requestActive || !root.doneFile) {
@@ -217,16 +225,9 @@ Item {
     return menuAppearance.rowHeightFor(detail, kind, root.filterText || root.dmenuActive)
   }
 
-  // Height the card can devote to rows before running off the screen — or
-  // past the frozen top edge once a search has pinned the card in place.
-  // Uses panel.cardTop rather than effectiveCardTop: the centered top is
-  // derived from the card height, which this value feeds.
+  // Height a dmenu card can devote to rows before running off the screen.
   function availableRowsHeight() {
-    var top = panel.cardTop >= 0 ? panel.cardTop : Style.gapsOut
-    var available = panel.height - top - Style.gapsOut - root.contentMargin * 2 - root.headerHeight - root.contentSpacing
-    // The starting menu sets the ceiling along with the offset: drilling into
-    // a longer submenu scrolls behind the fold instead of growing the card.
-    if (panel.maxRowsHeight >= 0) available = Math.min(available, panel.maxRowsHeight)
+    var available = panel.height - root.cardTop - Style.gapsOut - root.cardChrome
     // A card that swallows the whole screen reads as a page, not a menu.
     return Math.min(available, Math.round(panel.height * 0.7))
   }
@@ -246,27 +247,6 @@ Item {
     if (full < 1) return Math.max(available, root.baseRowHeight)
 
     return totals[full - 1] + root.rowSpacing + peek
-  }
-
-  function rowListHeight(_serial, _count, _filter, _divider) {
-    if (displayModel.count === 0) return root.baseRowHeight
-
-    var totals = []
-    var total = 0
-    var previousSection = ""
-
-    for (var i = 0; i < displayModel.count; i++) {
-      var row = displayModel.get(i)
-      if (i > 0) total += root.rowSpacing
-      if (row.section === "drilldown" && previousSection !== "drilldown") total += root.dividerHeight
-      // The rule under the answers, mirroring the section delegate below.
-      else if (previousSection === "answer" && row.section !== "answer") total += root.dividerHeight
-      total += root.rowHeightForDetail(row.detail, row.kind)
-      previousSection = row.section
-      totals.push(total)
-    }
-
-    return foldedListHeight(totals, availableRowsHeight())
   }
 
   function dmenuRowListHeight(_serial, _count, _filter) {
@@ -764,8 +744,63 @@ Item {
     revealCursor()
   }
 
+  readonly property string searchPlaceholder: {
+    if (root.dmenuActive) return root.dmenuPrompt + "…"
+    if (root.activeMenu === "root") return "Search apps and commands…"
+    var active = root.item(root.activeMenu)
+    return "Search " + (active ? (active.title || active.label) : "") + "…"
+  }
+
+  // Offered every key before the search input sees it. Takes the keys that
+  // drive the list and leaves text editing (typing, cursor movement, paste,
+  // Ctrl+Backspace) to the input.
+  function handleSearchKey(event, input) {
+    // The dialog owns the keyboard while it is up; nothing may reach the input.
+    if (root.deleteConfirmOpen) {
+      deleteConfirm.handleKey(event)
+      return true
+    }
+
+    // Right and Delete only mean "act on the row" once there is no text to
+    // their right; before that they move and edit inside the query.
+    var atEnd = input.cursorPosition === input.text.length && input.selectedText === ""
+    var key = event.key
+
+    if (key === Qt.Key_Tab || key === Qt.Key_Backtab) return true
+    if (key === Qt.Key_Delete) {
+      if (!atEnd) return false
+      root.requestDeleteSelected()
+      return true
+    }
+    if (key === Qt.Key_Escape) {
+      if (root.filterText) root.setFilter("")
+      else root.cancel()
+      return true
+    }
+    if (key === Qt.Key_U && event.modifiers === Qt.ControlModifier) {
+      if (root.filterText) root.setFilter("")
+      return true
+    }
+    if ((key === Qt.Key_Backspace || key === Qt.Key_Left) && !root.filterText) {
+      root.goBack()
+      return true
+    }
+    if (key === Qt.Key_Up) { root.select(-1); return true }
+    if (key === Qt.Key_Down) { root.select(1); return true }
+    if (key === Qt.Key_PageUp) { root.select(-6); return true }
+    if (key === Qt.Key_PageDown) { root.select(6); return true }
+    if (key === Qt.Key_Return || key === Qt.Key_Enter || (key === Qt.Key_Right && atEnd)) {
+      if (root.dmenuActive) {
+        if (root.mode === "input") root.applyDmenuSelection(root.filterText)
+        else if (displayModel.count > 0) root.activateIndex(root.cursorActive ? root.selectedIndex : 0)
+      } else if (root.cursorActive) root.activateIndex(root.selectedIndex)
+      else if (displayModel.count > 0) root.cursorActive = true
+      return true
+    }
+    return false
+  }
+
   function setFilter(nextFilter) {
-    panel.freezeCardTop()
     root.filterText = nextFilter
     root.selectedIndex = 0
     root.cursorActive = root.mode !== "input"
@@ -779,7 +814,6 @@ Item {
   }
 
   function setActiveMenu(id, pushHistory, fromPointer) {
-    panel.freezeCardTop()
     if (!root.item(id)) id = "root"
     if (pushHistory && id !== root.activeMenu) root.navStack = root.navStack.concat([root.activeMenu])
     root.activeMenu = id
@@ -856,7 +890,7 @@ Item {
     root.deleteTarget = null
     deleteConfirm.selectedIndex = 1
     root.disarmPointer()
-    Qt.callLater(function() { keyCatcher.forceActiveFocus() })
+    Qt.callLater(function() { searchBar.focusInput() })
   }
 
   function confirmDelete() {
@@ -913,7 +947,7 @@ Item {
     // their icons. Refresh here even when the desktop entry list did not change.
     if (root.appLibrary) root.appLibrary.refreshIcons()
 
-    Qt.callLater(function() { keyCatcher.forceActiveFocus() })
+    Qt.callLater(function() { searchBar.focusInput() })
   }
 
   function openDmenu(payload) {
@@ -936,7 +970,7 @@ Item {
     opened = true
     rebuildDisplay()
 
-    Qt.callLater(function() { keyCatcher.forceActiveFocus() })
+    Qt.callLater(function() { searchBar.focusInput() })
   }
   ListModel { id: displayModel }
 
@@ -1432,97 +1466,38 @@ Item {
     WlrLayershell.keyboardFocus: WlrKeyboardFocus.Exclusive
     exclusionMode: ExclusionMode.Ignore
 
-    // The card opens centered exactly as always. The first search keystroke
-    // or submenu move freezes the top line where it currently sits — from
-    // then on the card grows and shrinks downward instead of re-centering
-    // on every resize, which made the menu jump around. The rows height is
-    // frozen at the same moment, so the starting menu also caps how tall the
-    // card may grow from there. Closing unfreezes both.
-    property int cardTop: -1
-    property int maxRowsHeight: -1
-    readonly property int centeredTop: Math.max(Style.gapsOut, Math.round((height - root.cardHeight) / 2))
-    readonly property int effectiveCardTop: cardTop >= 0 ? cardTop : centeredTop
-    function freezeCardTop() {
-      if (visible && cardTop < 0) {
-        cardTop = effectiveCardTop
-        maxRowsHeight = root.visibleRowsHeight
-      }
-    }
-    onVisibleChanged: if (!visible) { cardTop = -1; maxRowsHeight = -1 }
-
-    Rectangle {
-      anchors.fill: parent
-      color: root.scrim
-    }
-
+    // No scrim: the launcher floats over the desktop on its shadow alone.
+    // Clicking anywhere outside it still closes it.
     MouseArea {
       anchors.fill: parent
       onClicked: root.cancel()
     }
 
+    RectangularShadow {
+      x: card.x
+      y: card.y + menuAppearance.shadowOffset
+      width: card.width
+      height: card.height
+      radius: card.radius
+      blur: menuAppearance.shadowBlur
+      color: menuAppearance.shadow
+    }
+
     BorderSurface {
       id: card
       width: root.cardWidth
-      height: Math.min(root.cardHeight, panel.height - Style.gapsOut - panel.effectiveCardTop)
+      height: root.cardHeight
       radius: root.cornerRadius
       anchors.horizontalCenter: parent.horizontalCenter
-      y: panel.effectiveCardTop
+      y: root.cardTop
       color: root.background
       borderSpec: root.borderSpec
-      padding: root.contentMargin
 
       MouseArea { anchors.fill: parent; onClicked: {} }
 
       Item {
-        id: keyCatcher
         anchors.fill: parent
         z: root.deleteConfirmOpen ? 20 : 0
-        focus: true
-
-        Keys.priority: Keys.BeforeItem
-        Keys.onPressed: function(event) {
-          if (root.deleteConfirmOpen) {
-            if (deleteConfirm.handleKey(event)) event.accepted = true
-            return
-          }
-
-          if (event.key === Qt.Key_Delete) {
-            root.requestDeleteSelected()
-            event.accepted = true
-          } else if (event.key === Qt.Key_Escape) {
-            if (root.filterText) root.setFilter("")
-            else root.cancel()
-            event.accepted = true
-          } else if (Util.editsFilter(event, root.filterText)) {
-            root.setFilter(Util.editedFilter(event, root.filterText))
-            event.accepted = true
-          } else if ((event.key === Qt.Key_Backspace || event.key === Qt.Key_Left) && !root.filterText) {
-            root.goBack()
-            event.accepted = true
-          } else if (event.key === Qt.Key_Up) {
-            root.select(-1)
-            event.accepted = true
-          } else if (event.key === Qt.Key_Down) {
-            root.select(1)
-            event.accepted = true
-          } else if (event.key === Qt.Key_PageUp) {
-            root.select(-6)
-            event.accepted = true
-          } else if (event.key === Qt.Key_PageDown) {
-            root.select(6)
-            event.accepted = true
-          } else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter || event.key === Qt.Key_Right) {
-            if (root.dmenuActive) {
-              if (root.mode === "input") root.applyDmenuSelection(root.filterText)
-              else if (displayModel.count > 0) root.activateIndex(root.cursorActive ? root.selectedIndex : 0)
-            } else if (root.cursorActive) root.activateIndex(root.selectedIndex)
-            else if (displayModel.count > 0) root.cursorActive = true
-            event.accepted = true
-          } else if (event.text && event.text.length === 1 && event.text.charCodeAt(0) >= 32 && event.text.charCodeAt(0) !== 127 && (event.modifiers === Qt.NoModifier || event.modifiers === Qt.ShiftModifier)) {
-            root.setFilter(root.filterText + event.text)
-            event.accepted = true
-          }
-        }
 
         ConfirmDialog {
           id: deleteConfirm
@@ -1546,35 +1521,42 @@ Item {
 
       Column {
         anchors.fill: parent
-        anchors.topMargin: card.contentTopInset
-        anchors.rightMargin: card.contentRightInset
-        anchors.bottomMargin: card.contentBottomInset
-        anchors.leftMargin: card.contentLeftInset
-        spacing: root.contentSpacing
+        anchors.topMargin: card.borderTop
+        anchors.rightMargin: card.borderRight
+        anchors.bottomMargin: card.borderBottom
+        anchors.leftMargin: card.borderLeft
+
+        SearchBar {
+          id: searchBar
+          width: parent.width
+          height: menuAppearance.searchBarHeight
+          appearance: menuAppearance
+          launcher: menuState
+          placeholder: root.searchPlaceholder
+          showBack: !root.dmenuActive && root.activeMenu !== "root"
+          keyHandler: root.handleSearchKey
+          onTextEdited: function(text) { root.setFilter(text) }
+          onBackRequested: {
+            root.goBack()
+            searchBar.focusInput()
+          }
+        }
 
         Rectangle {
           width: parent.width
-          height: root.headerHeight
-          radius: root.cornerRadius
-          color: "transparent"
-
-          Text {
-            textFormat: Text.PlainText
-            anchors.left: parent.left
-            anchors.right: parent.right
-            anchors.verticalCenter: parent.verticalCenter
-            text: root.filterText || (root.dmenuActive ? (root.dmenuPrompt + "…") : ((root.item(root.activeMenu) ? (root.item(root.activeMenu).title || root.item(root.activeMenu).label) : "Go") + "…"))
-            color: root.foreground
-            opacity: root.filterText ? 1 : 0.58
-            font.family: root.fontFamily
-            font.pixelSize: Style.font.heading
-            elide: Text.ElideRight
-          }
-
+          height: Style.spacing.hairline
+          visible: root.mode !== "input"
+          color: menuAppearance.divider
         }
 
         Item {
           width: parent.width
+          height: root.contentSpacing
+        }
+
+        Item {
+          x: root.contentMargin
+          width: parent.width - root.contentMargin * 2
           height: root.visibleRowsHeight
 
           ListView {
