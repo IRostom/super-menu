@@ -37,6 +37,28 @@ IME. Keys that drive the list are taken before the input sees them:
 | Backspace, ← | With no query, go back to the parent menu |
 | Ctrl+U | Clear the query |
 | Delete | With the text cursor at the end, uninstall the selected app |
+| Ctrl+B, Ctrl+K | Open or close the action panel |
+| Ctrl+Shift+F | Add the selected row to Favorites, or remove it |
+| Ctrl+Shift+C | Copy the app's desktop ID, the command, or the answer |
+
+### Footer and actions
+
+The footer shows where you are on the left, and on the right what Enter will
+do for the selected row ("Open Application", "Run Command", "Open Menu",
+"Copy Answer"), then "Actions Ctrl B" when the row has more than one.
+
+Ctrl+B opens the action panel above the footer, listing every action for the
+row with its shortcut. It has its own filter field: type to narrow the list,
+Enter to run, Esc or Ctrl+B to close. The actions are defined in
+`Actions.js`:
+
+| Row | Actions |
+|---|---|
+| App | Open, Add to Favorites, Copy Desktop ID, Uninstall… |
+| Command | Run, Add to Favorites, Copy Command |
+| Menu | Open, Add to Favorites |
+| Answer | Copy (or Run, if the plugin gives an action) |
+| Any row in Suggestions | also Remove from Suggestions |
 
 ### Rows and sections
 
@@ -215,10 +237,11 @@ qalc -e -t 1
 | File | Role |
 |---|---|
 | `Menu.qml` | Cloned menu logic: IPC, menu tree, providers, dmenu, query plugins, layout sizing. Query-plugin hooks are marked in the source. |
-| `launcher/` | The menu's view: `Appearance.qml` (visual tokens, window size), `LauncherState.qml` (state the views read), `SearchBar.qml`, `ListRow.qml` + `IconTile.qml`, `SectionHeader.qml`, scroll fades and empty state. `Menu.qml` aliases the tokens and state under their old names. |
+| `launcher/` | The menu's view: `Appearance.qml` (visual tokens, window size), `LauncherState.qml` (state the views read), `SearchBar.qml`, `ListRow.qml` + `IconTile.qml`, `SectionHeader.qml`, `Footer.qml` + `FooterButton.qml`, `ActionPanel.qml`, `Keycaps.qml`, scroll fades and empty state. `Menu.qml` aliases the tokens and state under their old names. |
 | `MenuModel.js` | Cloned model helpers, plus the `copyText`/`actionArgv` roles. |
 | `QueryPlugins.js` | Registry, trigger gate, row normalization, JS compilation. |
 | `QueryBuiltins.js` | Descriptors for the shipped plugins. |
+| `Actions.js` | What each kind of row can do, their shortcuts and keycaps. |
 | `Sections.js` | Section labels for the list: root, search, answers. |
 | `MenuHistory.qml` | Favorites and recent launches, stored in `$XDG_STATE_HOME/omarchy/menu-history.json`. |
 | `query-plugins/calc.sh` | The calculator/converter. |

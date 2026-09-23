@@ -35,6 +35,10 @@ QtObject {
   property color shadow: Qt.rgba(0, 0, 0, 0.35)
   property int shadowBlur: Style.space(28)
   property int shadowOffset: Style.space(6)
+  property int footerHeight: Style.space(41)
+  property color footerBackground: Qt.darker(background, 1.12)
+  property int actionPanelWidth: Style.space(400)
+  property color popoverBackground: Qt.lighter(background, 1.18)
 
   property int contentMargin: Style.spacing.panelPadding
   property int contentSpacing: Style.spacing.md

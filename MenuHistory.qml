@@ -38,6 +38,11 @@ QtObject {
     history.save()
   }
 
+  function forgetRecent(id) {
+    history.recents = history.recents.filter(function(r) { return r.id !== id })
+    history.save()
+  }
+
   function recentIds() {
     return history.recents.map(function(r) { return r.id })
   }
@@ -64,5 +69,8 @@ QtObject {
     printErrors: false
     onFileChanged: reload()
     onLoaded: history.load(text())
+    // A missing or deleted file means no history, not "keep what we had";
+    // otherwise the next save would write the stale lists back.
+    onLoadFailed: history.load("")
   }
 }

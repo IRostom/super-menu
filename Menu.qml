@@ -9,6 +9,7 @@ import "MenuModel.js" as MenuModel
 import "QueryPlugins.js" as QueryPlugins
 import "QueryBuiltins.js" as QueryBuiltins
 import "Sections.js" as Sections
+import "Actions.js" as Actions
 import "launcher"
 
 Item {
@@ -153,13 +154,14 @@ Item {
   AppLibrary { id: ownAppLibrary }
   property alias deleteConfirmOpen: menuState.deleteConfirmOpen
   property var deleteTarget: null
-  onOpenedChanged: if (!opened) { deleteConfirmOpen = false; deleteTarget = null }
+  onOpenedChanged: if (!opened) { deleteConfirmOpen = false; deleteTarget = null; actionPanelOpen = false }
   // Visual tokens and view-facing state live in launcher/. The aliases keep
   // the logic below reading and writing them under their old names.
   Appearance { id: menuAppearance }
   LauncherState { id: menuState }
   MenuHistory { id: menuHistory }
   property alias hoveredIndex: menuState.hoveredIndex
+  property alias actionPanelOpen: menuState.actionPanelOpen
   property alias background: menuAppearance.background
   property alias foreground: menuAppearance.foreground
   property alias border: menuAppearance.border
@@ -184,7 +186,7 @@ Item {
   readonly property int cardTop: Math.max(Style.gapsOut, Math.round((panel.height - menuAppearance.windowHeight) / 3))
   // Everything in the card that is not rows: border, search bar, the rule
   // under it, and the list's own top and bottom padding.
-  readonly property int cardChrome: Math.round(card.borderTop + card.borderBottom) + menuAppearance.searchBarHeight + Style.spacing.hairline + root.contentSpacing + menuAppearance.listInset
+  readonly property int cardChrome: Math.round(card.borderTop + card.borderBottom) + menuAppearance.searchBarHeight + Style.spacing.hairline + root.contentSpacing + menuAppearance.listInset + menuAppearance.footerHeight
   property int visibleRowsHeight: root.dmenuActive
     ? dmenuRowListHeight(layoutSerial, displayModel.count, filterText)
     : Math.max(0, root.cardHeight - root.cardChrome)
@@ -772,6 +774,93 @@ Item {
     revealCursor()
   }
 
+  // --- actions --------------------------------------------------------
+  // What the selected row can do (Actions.js). The footer shows the first
+  // and the action panel lists them all. The arguments are only there so the
+  // binding re-evaluates when the rows, the selection or the history change.
+  readonly property var selectedActions: root.actionsForSelection(root.selectedIndex, root.cursorActive, root.layoutSerial, menuHistory.favorites, menuHistory.recents)
+
+  function selectedRow() {
+    if (!root.cursorActive || root.selectedIndex < 0 || root.selectedIndex >= displayModel.count) return null
+    return displayModel.get(root.selectedIndex)
+  }
+
+  function actionsForSelection() {
+    var row = root.selectedRow()
+    if (!row) return []
+    var list = Actions.actionsFor(row, {
+      isFavorite: menuHistory.isFavorite,
+      inSuggestions: row.section === "Suggestions",
+      canUninstall: !!root.appLibrary
+    })
+    for (var i = 0; i < list.length; i++) list[i].keycaps = Actions.keycaps(list[i].keys)
+    return list
+  }
+
+  function runRowAction(action) {
+    root.closeActionPanel()
+    var row = root.selectedRow()
+    if (!action || !row) return
+
+    if (action.id === "open") {
+      root.activateIndex(root.selectedIndex)
+    } else if (action.id === "favorite") {
+      menuHistory.toggleFavorite(row.itemId)
+      // Keep the cursor on the same row when it moves into or out of
+      // Favorites; rebuildDisplay() restores it by id.
+      root.cursorMoved = true
+      root.rebuildDisplay()
+    } else if (action.id === "forget") {
+      menuHistory.forgetRecent(row.itemId)
+      root.rebuildDisplay()
+    } else if (action.id === "copy") {
+      root.copyAndClose(action.text)
+    } else if (action.id === "uninstall") {
+      root.requestDeleteSelected()
+    }
+  }
+
+  function openActionPanel() {
+    if (root.selectedActions.length === 0) return
+    root.actionPanelOpen = true
+    actionPanel.show()
+  }
+
+  function closeActionPanel() {
+    if (!root.actionPanelOpen) return
+    root.actionPanelOpen = false
+    Qt.callLater(function() { searchBar.focusInput() })
+  }
+
+  function toggleActionPanel() {
+    if (root.actionPanelOpen) root.closeActionPanel()
+    else root.openActionPanel()
+  }
+
+  // Over stdin, because wl-copy has no `--` terminator and would read a value
+  // like "-42" as an option, and because the clipboard content never lands in
+  // the process table this way. stdin is re-enabled each time: onStarted
+  // closes it once the payload is written.
+  function copyText(text) {
+    clipProc.payload = String(text || "")
+    clipProc.stdinEnabled = true
+    clipProc.running = true
+  }
+
+  function copyAndClose(text) {
+    applySerial = requestSerial
+    opened = false
+    filterText = ""
+    root.copyText(text)
+  }
+
+  readonly property string footerTitle: {
+    if (root.dmenuActive) return root.dmenuPrompt
+    if (root.activeMenu === "root") return "Omarchy"
+    var active = root.item(root.activeMenu)
+    return active ? (active.title || active.label) : ""
+  }
+
   readonly property string searchPlaceholder: {
     if (root.dmenuActive) return root.dmenuPrompt + "…"
     if (root.activeMenu === "root") return "Search apps and commands…"
@@ -793,6 +882,18 @@ Item {
     // their right; before that they move and edit inside the query.
     var atEnd = input.cursorPosition === input.text.length && input.selectedText === ""
     var key = event.key
+
+    if (Actions.matchesAny(event, Actions.TOGGLE_PANEL)) {
+      root.toggleActionPanel()
+      return true
+    }
+    // Delete keeps its own rule below: it edits the query until the text
+    // cursor reaches the end.
+    var shortcut = Actions.forShortcut(root.selectedActions, event)
+    if (shortcut && shortcut.id !== "uninstall") {
+      root.runRowAction(shortcut)
+      return true
+    }
 
     if (key === Qt.Key_Tab || key === Qt.Key_Backtab) return true
     if (key === Qt.Key_Delete) {
@@ -1282,12 +1383,8 @@ Item {
 
     if (row.action) { Util.execDetached(row.action); return }
 
-    // The default: put the value on the clipboard. Over stdin, because
-    // wl-copy has no `--` terminator and would read a value like "-42" as an
-    // option, and because the clipboard content never lands in the process
-    // table this way.
-    clipProc.payload = row.copyText || row.label
-    clipProc.running = true
+    // The default: put the value on the clipboard.
+    root.copyText(row.copyText || row.label)
   }
 
   // Where the cursor sits when the user has not moved it. An answer only
@@ -1645,6 +1742,59 @@ Item {
           width: parent.width
           height: 0
         }
+      }
+
+      Footer {
+        id: footer
+        visible: root.mode !== "input"
+        anchors.left: parent.left
+        anchors.leftMargin: card.borderLeft
+        anchors.right: parent.right
+        anchors.rightMargin: card.borderRight
+        anchors.bottom: parent.bottom
+        anchors.bottomMargin: card.borderBottom
+        height: menuAppearance.footerHeight
+        appearance: menuAppearance
+        contextTitle: root.footerTitle
+        contextGlyph: (!root.dmenuActive && root.item(root.activeMenu)) ? (root.item(root.activeMenu).icon || "") : ""
+        contextId: root.activeMenu
+        primaryTitle: root.selectedActions.length > 0 ? root.selectedActions[0].title : ""
+        primaryKeycaps: ["↵"]
+        hasMoreActions: root.selectedActions.length > 1
+        panelKeycaps: Actions.keycaps(Actions.TOGGLE_PANEL[0])
+        panelOpen: root.actionPanelOpen
+        onPrimaryClicked: if (root.selectedActions.length > 0) root.runRowAction(root.selectedActions[0])
+        onActionsClicked: root.toggleActionPanel()
+      }
+
+      // While the panel is open, a click anywhere else in the card closes it
+      // rather than reaching the row or button underneath.
+      MouseArea {
+        anchors.fill: parent
+        z: 5
+        visible: root.actionPanelOpen
+        onClicked: root.closeActionPanel()
+      }
+
+      ActionPanel {
+        id: actionPanel
+        z: 6
+        appearance: menuAppearance
+        open: root.actionPanelOpen
+        actions: root.selectedActions
+        width: Math.min(implicitWidth, card.width - menuAppearance.listInset * 2)
+        height: Math.min(implicitHeight, Math.round(card.height * 0.6))
+        anchors.right: parent.right
+        anchors.rightMargin: card.borderRight + menuAppearance.listInset
+        anchors.bottom: footer.top
+        anchors.bottomMargin: Style.space(6)
+        keyHandler: function(event) {
+          if (!Actions.matchesAny(event, Actions.TOGGLE_PANEL)) return false
+          root.closeActionPanel()
+          return true
+        }
+        onTriggered: function(action) { root.runRowAction(action) }
+        onDismissed: root.closeActionPanel()
       }
     }
   }

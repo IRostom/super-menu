@@ -17,4 +17,5 @@ QtObject {
   property int hoveredIndex: -1
   property var answerRows: []
   property bool deleteConfirmOpen: false
+  property bool actionPanelOpen: false
 }
