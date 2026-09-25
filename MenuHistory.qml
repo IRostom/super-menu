@@ -3,7 +3,8 @@ import Quickshell
 import Quickshell.Io
 
 // Pinned favorites and recently launched rows, for the root view's
-// Favorites and Suggestions sections. Stored as item ids in
+// Favorites and Suggestions sections, and the Search Emojis view's Pinned and
+// Recently Used emojis. Stored as item ids and emoji strings in
 // $XDG_STATE_HOME/omarchy/menu-history.json -- machine state, not config, so
 // it lives outside ~/.config and never ends up in a dotfiles repo.
 QtObject {
@@ -15,6 +16,11 @@ QtObject {
   property var favorites: []
   // Newest first: [{ id, at }] with `at` in ms since the epoch.
   property var recents: []
+
+  readonly property int maxEmojiRecents: 32
+  property var emojiPins: []
+  // Newest first, emoji strings.
+  property var emojiRecents: []
 
   function isFavorite(id) {
     return history.favorites.indexOf(id) >= 0
@@ -47,6 +53,30 @@ QtObject {
     return history.recents.map(function(r) { return r.id })
   }
 
+  function isEmojiPinned(emoji) {
+    return history.emojiPins.indexOf(emoji) >= 0
+  }
+
+  function toggleEmojiPin(emoji) {
+    if (!emoji) return
+    history.emojiPins = history.isEmojiPinned(emoji)
+      ? history.emojiPins.filter(function(e) { return e !== emoji })
+      : history.emojiPins.concat([emoji])
+    history.save()
+  }
+
+  function recordEmoji(emoji) {
+    if (!emoji) return
+    history.emojiRecents = [emoji].concat(history.emojiRecents.filter(function(e) { return e !== emoji }))
+      .slice(0, history.maxEmojiRecents)
+    history.save()
+  }
+
+  function forgetEmoji(emoji) {
+    history.emojiRecents = history.emojiRecents.filter(function(e) { return e !== emoji })
+    history.save()
+  }
+
   function load(raw) {
     var data = ({})
     try { data = JSON.parse(raw || "{}") } catch (e) { data = ({}) }
@@ -56,10 +86,21 @@ QtObject {
     history.recents = Array.isArray(data.recents)
       ? data.recents.filter(function(r) { return r && typeof r.id === "string" && r.id.length > 0 })
       : []
+    history.emojiPins = history.strings(data.emojiPins)
+    history.emojiRecents = history.strings(data.emojiRecents)
+  }
+
+  function strings(value) {
+    return Array.isArray(value) ? value.filter(function(v) { return typeof v === "string" && v.length > 0 }) : []
   }
 
   function save() {
-    file.setText(JSON.stringify({ favorites: history.favorites, recents: history.recents }, null, 2) + "\n")
+    file.setText(JSON.stringify({
+      favorites: history.favorites,
+      recents: history.recents,
+      emojiPins: history.emojiPins,
+      emojiRecents: history.emojiRecents
+    }, null, 2) + "\n")
   }
 
   property FileView file: FileView {

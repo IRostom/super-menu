@@ -17,7 +17,12 @@
 // in by Menu.qml (which resolves it from Qt.resolvedUrl). Nothing here can
 // discover it alone, and hardcoding a path would break the moment the folder
 // is cloned or renamed.
-function descriptors(scriptDir) {
+//
+// services carries what Menu.qml already has loaded and a descriptor cannot
+// read alone: searchEmojis(query, limit) over omarchy.emojis' data.
+function descriptors(scriptDir, services) {
+  var emojiPaste = services.omarchyPath + "/bin/omarchy-menu-emoji-insert"
+
   return [
     {
       id: "calc",
@@ -47,6 +52,28 @@ function descriptors(scriptDir) {
       // result; `=2+2` hands Enter to the answer. An answer arriving mid-word
       // should never take a keystroke the user had aimed somewhere else.
       stealsFocus: "explicit"
+    },
+    {
+      // `:fire` at the root. Only the prefix triggers it -- no gate, match or
+      // regex -- so plain words never bring up emojis. The Search Emojis
+      // view is the full picker; this is the shortcut to one emoji.
+      id: "emoji",
+      title: "Emoji",
+      icon: "󰞅",
+      priority: 55,
+      kind: "js",
+      trigger: { prefixes: [":"] },
+      maxRows: 6,
+      rows: function(match) {
+        return services.searchEmojis(match.text, 6).map(function(item) {
+          return {
+            value: item.name,
+            icon: item.e,
+            copy: item.e,
+            actionArgv: [emojiPaste, item.e]
+          }
+        })
+      }
     }
   ]
 }

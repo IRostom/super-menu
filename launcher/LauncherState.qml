@@ -24,4 +24,6 @@ QtObject {
   property bool quickAccessActive: false
   // The app detail pane beside the list (Ctrl+D on an app row).
   property bool detailVisible: false
+  // The Search Emojis grid, as EmojiSearch.lines() lays it out; [] elsewhere.
+  property var emojiLines: []
 }

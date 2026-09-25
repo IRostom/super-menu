@@ -50,8 +50,10 @@ function keycaps(spec) {
   })
 }
 
-// ctx: { isFavorite(id), inSuggestions, canUninstall, detailsShown }
-// Clipboard and file rows are not menu items, so they cannot be pinned.
+// ctx: { isFavorite(id), inSuggestions, canUninstall, detailsShown,
+//        isEmojiPinned(emoji), inEmojiRecents(emoji) }
+// Clipboard, file and emoji rows are not menu items, so they cannot be
+// Favorites; emojis have pins of their own.
 function actionsFor(row, ctx) {
   if (!row) return []
   var list = []
@@ -82,6 +84,16 @@ function actionsFor(row, ctx) {
     list.push({ id: "details", title: ctx.detailsShown ? "Hide Details" : "Show Details", icon: "󰋼", keys: "ctrl+d" })
     list.push({ id: "copy", title: "Copy Path", icon: "󰆏", keys: "ctrl+shift+c", text: row.filePath })
     list.push({ id: "copy-file", title: "Copy File", icon: "󰈔", keys: "ctrl+alt+c" })
+    return list
+  }
+  else if (row.kind === "emoji") {
+    var emojiPinned = ctx.isEmojiPinned(row.copyText)
+    list.push({ id: "open", title: "Paste Emoji", icon: "󰆒", keys: "return" })
+    list.push({ id: "copy-emoji", title: "Copy Emoji", icon: "󰆏", keys: "ctrl+shift+c" })
+    list.push({ id: "pin-emoji", title: emojiPinned ? "Unpin Emoji" : "Pin Emoji", icon: emojiPinned ? "󰤰" : "󰐃", keys: "ctrl+shift+p" })
+    list.push({ id: "copy", title: "Copy Name", icon: "󰆏", keys: "", text: row.label })
+    list.push({ id: "copy", title: "Copy Unicode Codepoint", icon: "󰆏", keys: "ctrl+alt+c", text: row.detail })
+    if (ctx.inEmojiRecents(row.copyText)) list.push({ id: "forget-emoji", title: "Remove from Recently Used", icon: "󰜺", keys: "delete", danger: true })
     return list
   }
 

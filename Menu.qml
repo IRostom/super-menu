@@ -11,6 +11,7 @@ import "QueryBuiltins.js" as QueryBuiltins
 import "Sections.js" as Sections
 import "Actions.js" as Actions
 import "FileSearch.js" as FileSearch
+import "EmojiSearch.js" as EmojiSearch
 import "launcher"
 
 Item {
@@ -75,6 +76,8 @@ Item {
       query: query,
       matches: matched,
       clipboardEntries: clipboardSource.history.length,
+      emojiCount: emojiSource.emojis.length,
+      emojiMatches: emojiSource.search(query.replace(/^:/, ""), 5).map(function(e) { return e.e + " " + e.name }),
       fileSearchArgv: FileSearch.argvFor(query, root.homeDir)
     })
   }
@@ -686,7 +689,8 @@ Item {
     var query = root.filterText.trim()
 
     if (root.inView) {
-      rows = root.inClipboardView ? root.clipboardRows(query) : root.fileRows()
+      if (root.inEmojiView) rows = root.emojiRows(query)
+      else rows = root.inClipboardView ? root.clipboardRows(query) : root.fileRows()
     } else if (query) {
       var currentRows = []
       var drilldownRows = []
@@ -745,7 +749,9 @@ Item {
       }).concat(rows)
     }
 
-    for (var k = 0; k < rows.length; k++) displayModel.append(rows[k])
+    // One call: the emoji view is close to two thousand rows.
+    if (rows.length > 0) displayModel.append(rows)
+    if (!root.inEmojiView && root.emojiLines.length > 0) root.emojiLines = []
     layoutSerial += 1
 
     var restored = -1
@@ -771,6 +777,15 @@ Item {
   // hidden row peeking past the cursor in the direction of travel.
   function revealCursor() {
     if (displayModel.count === 0) return
+    if (root.inEmojiView) {
+      var line = EmojiSearch.lineOf(root.emojiLines, root.selectedIndex)
+      if (line < 0) return
+      // The section's header comes along when the cursor is on its first line.
+      if (line > 0 && root.emojiLines[line - 1].header !== undefined)
+        emojiGrid.positionViewAtIndex(line - 1, ListView.Contain)
+      emojiGrid.positionViewAtIndex(line, ListView.Contain)
+      return
+    }
     resultList.positionViewAtIndex(root.selectedIndex, ListView.Contain)
 
     var item = resultList.itemAtIndex(root.selectedIndex)
@@ -806,7 +821,7 @@ Item {
   // What the selected row can do (Actions.js). The footer shows the first
   // and the action panel lists them all. The arguments are only there so the
   // binding re-evaluates when the rows, the selection or the history change.
-  readonly property var selectedActions: root.actionsForSelection(root.selectedIndex, root.cursorActive, root.layoutSerial, menuHistory.favorites, menuHistory.recents, root.detailVisible, root.viewDetailVisible)
+  readonly property var selectedActions: root.actionsForSelection(root.selectedIndex, root.cursorActive, root.layoutSerial, menuHistory.favorites, menuHistory.recents, root.detailVisible, root.viewDetailVisible, menuHistory.emojiPins, menuHistory.emojiRecents)
 
   function selectedRow() {
     if (!root.cursorActive || root.selectedIndex < 0 || root.selectedIndex >= displayModel.count) return null
@@ -820,7 +835,9 @@ Item {
       isFavorite: menuHistory.isFavorite,
       inSuggestions: row.section === "Suggestions",
       canUninstall: !!root.appLibrary,
-      detailsShown: root.inView ? root.viewDetailVisible : root.detailVisible
+      detailsShown: root.inView ? root.viewDetailVisible : root.detailVisible,
+      isEmojiPinned: menuHistory.isEmojiPinned,
+      inEmojiRecents: function(e) { return menuHistory.emojiRecents.indexOf(e) >= 0 }
     })
     for (var i = 0; i < list.length; i++) list[i].keycaps = Actions.keycaps(list[i].keys)
     return list
@@ -861,6 +878,16 @@ Item {
       root.revealFile(row)
     } else if (action.id === "copy-file") {
       root.copyFile(row)
+    } else if (action.id === "copy-emoji") {
+      menuHistory.recordEmoji(row.copyText)
+      root.copyAndClose(row.copyText)
+    } else if (action.id === "pin-emoji") {
+      menuHistory.toggleEmojiPin(row.copyText)
+      root.showToast(menuHistory.isEmojiPinned(row.copyText) ? "Pinned " + row.copyText : "Unpinned " + row.copyText)
+      root.cursorMoved = true
+      root.rebuildDisplay()
+    } else if (action.id === "forget-emoji") {
+      root.forgetEmoji(row)
     }
   }
 
@@ -1055,12 +1082,20 @@ Item {
     if (root.dmenuActive) return root.dmenuPrompt
     if (root.activeMenu === "root") return "Omarchy"
     var active = root.item(root.activeMenu)
-    return active ? (active.title || active.label) : ""
+    var title = active ? (active.title || active.label) : ""
+    // The grid has no labels, so the footer names the selected emoji, the
+    // way vicinae's navigation title does.
+    if (root.inEmojiView) {
+      var row = root.selectedActions.length > 0 ? root.selectedRow() : null
+      if (row) return title + " · " + row.label
+    }
+    return title
   }
 
   readonly property string searchPlaceholder: {
     if (root.dmenuActive) return root.dmenuPrompt + "…"
     if (root.activeMenu === "root") return "Search apps and commands…"
+    if (root.inEmojiView) return "Search emojis…"
     var active = root.item(root.activeMenu)
     return "Search " + (active ? (active.title || active.label) : "") + "…"
   }
@@ -1119,6 +1154,7 @@ Item {
       if (root.completeFolder(root.selectedRow())) return true
     }
     if (key === Qt.Key_Tab || key === Qt.Key_Backtab) return true
+    if (root.inEmojiView && event.modifiers === Qt.NoModifier && root.handleEmojiKey(key)) return true
     if (key === Qt.Key_Delete) {
       if (!atEnd) return false
       root.requestDeleteSelected()
@@ -1229,6 +1265,10 @@ Item {
       root.openFile(row)
       return
     }
+    if (row.kind === "emoji") {
+      root.pasteEmoji(row)
+      return
+    }
     if (row.kind === "menu" || row.kind === "link") {
       root.setActiveMenu(row.target || row.itemId, true, fromPointer)
     } else if (row.kind === "app") {
@@ -1249,6 +1289,11 @@ Item {
     if (!root.cursorActive || root.selectedIndex < 0 || root.selectedIndex >= displayModel.count) return
     var row = displayModel.get(root.selectedIndex)
     if (!row) return
+    if (row.kind === "emoji") {
+      // No dialog: forgetting a recent emoji loses nothing.
+      if (menuHistory.emojiRecents.indexOf(row.copyText) >= 0) root.forgetEmoji(row)
+      return
+    }
     if (row.kind === "clip") root.deleteTarget = { kind: "clip", key: clipboardSource.keyAt(row.historyIndex), label: row.label }
     else if (row.kind === "app") root.deleteTarget = { kind: "app", appId: row.appId, label: row.label }
     else return
@@ -1431,7 +1476,10 @@ Item {
 
   function loadAnswerPlugins() {
     var list = []
-    var builtins = QueryBuiltins.descriptors(root.pluginDir)
+    var builtins = QueryBuiltins.descriptors(root.pluginDir, {
+      omarchyPath: root.omarchyPath,
+      searchEmojis: function(query, limit) { return emojiSource.search(query, limit) }
+    })
 
     for (var i = 0; i < builtins.length; i++) {
       var plugin = QueryPlugins.normalizeDescriptor(builtins[i], "builtin")
@@ -1706,9 +1754,11 @@ Item {
 
   readonly property string clipboardView: "clipboard-history"
   readonly property string fileView: "file-search"
+  readonly property string emojiView: "emoji"
   readonly property bool inClipboardView: !root.dmenuActive && root.activeMenu === root.clipboardView
   readonly property bool inFileView: !root.dmenuActive && root.activeMenu === root.fileView
-  readonly property bool inView: root.inClipboardView || root.inFileView
+  readonly property bool inEmojiView: !root.dmenuActive && root.activeMenu === root.emojiView
+  readonly property bool inView: root.inClipboardView || root.inFileView || root.inEmojiView
   readonly property string homeDir: Quickshell.env("HOME")
 
   // The views open split, like vicinae's. Ctrl+D there toggles this, not the
@@ -1720,6 +1770,15 @@ Item {
   property var fileResults: []
   property string fileQuery: ""
   property int fileRevision: 0
+
+  // Search results past this are not worth a grid; a longer query narrows them.
+  readonly property int maxEmojiResults: 400
+  property alias emojiLines: menuState.emojiLines
+
+  EmojiSource {
+    id: emojiSource
+    onEmojisChanged: if (root.opened && root.inEmojiView) root.rebuildDisplay()
+  }
 
   ClipboardSource {
     id: clipboardSource
@@ -1735,12 +1794,16 @@ Item {
       MenuModel.normalizeItem(root.fileView, {
         parent: "root", label: "Search Files", icon: "󰍉", provider: "files",
         aliases: ["files", "find", "file"]
+      }),
+      MenuModel.normalizeItem(root.emojiView, {
+        parent: "root", label: "Search Emojis", icon: "󰞅", provider: "emoji",
+        aliases: ["emojis", "emoticon", "smiley"]
       })
     ]
   }
 
   function isViewId(id) {
-    return id === root.clipboardView || id === root.fileView
+    return id === root.clipboardView || id === root.fileView || id === root.emojiView
   }
 
   // From the full entry, not the capped copy displayRows() hands out.
@@ -1781,6 +1844,78 @@ Item {
       }))
     }
     return rows
+  }
+
+  // Search Emojis. The rows are one flat list, section by section, so the
+  // selection, actions and footer work as they do for any view; the grid
+  // draws them from emojiLines, which numbers its cells by the same index.
+  function emojiRows(query) {
+    var sections = query
+      ? [{ label: "Results", items: emojiSource.search(query, root.maxEmojiResults) }]
+      : EmojiSearch.sections(emojiSource.emojis, menuHistory.emojiPins, menuHistory.emojiRecents)
+    root.emojiLines = EmojiSearch.lines(sections, emojiGrid.columns)
+
+    var rows = []
+    for (var s = 0; s < sections.length; s++) {
+      var items = sections[s].items
+      for (var i = 0; i < items.length; i++) {
+        rows.push(MenuModel.viewRow({
+          // By section too: a pinned or recent emoji is also in its category,
+          // and rebuildDisplay() puts the cursor back on the first row with
+          // its id.
+          itemId: "emoji." + sections[s].label + "." + items[i].e,
+          kind: "emoji",
+          icon: items[i].e,
+          label: items[i].name,
+          detail: EmojiSearch.codepoint(items[i].e),
+          copyText: items[i].e,
+          section: sections[s].label
+        }))
+      }
+    }
+    return rows
+  }
+
+  // Arrows move through the grid in two dimensions. Left and Right no longer
+  // edit the query here, as in vicinae and omarchy.emojis; Backspace on an
+  // empty query still goes back.
+  function handleEmojiKey(key) {
+    var count = displayModel.count
+    if (count === 0) return false
+    var next = -1
+    var page = Math.max(1, Math.floor(emojiGrid.height / Math.max(1, emojiGrid.cellSize)))
+    if (key === Qt.Key_Left) next = Math.max(0, root.selectedIndex - 1)
+    else if (key === Qt.Key_Right) next = Math.min(count - 1, root.selectedIndex + 1)
+    else if (key === Qt.Key_Up) next = EmojiSearch.moveVertical(root.emojiLines, root.selectedIndex, -1)
+    else if (key === Qt.Key_Down) next = EmojiSearch.moveVertical(root.emojiLines, root.selectedIndex, 1)
+    else if (key === Qt.Key_PageUp) next = EmojiSearch.moveVertical(root.emojiLines, root.selectedIndex, -page)
+    else if (key === Qt.Key_PageDown) next = EmojiSearch.moveVertical(root.emojiLines, root.selectedIndex, page)
+    else return false
+
+    root.cursorMoved = true
+    root.disarmPointer()
+    if (!root.cursorActive) {
+      root.cursorActive = true
+      next = 0
+    }
+    root.selectedIndex = next
+    root.revealCursor()
+    return true
+  }
+
+  // omarchy.emojis' own helper: copies the emoji, then presses Shift+Insert
+  // in the window that had focus once the launcher has let it go.
+  function pasteEmoji(row) {
+    var emoji = row.copyText
+    menuHistory.recordEmoji(emoji)
+    root.closeNow()
+    Quickshell.execDetached([root.omarchyPath + "/bin/omarchy-menu-emoji-insert", emoji])
+  }
+
+  function forgetEmoji(row) {
+    menuHistory.forgetEmoji(row.copyText)
+    root.showToast("Removed from Recently Used")
+    root.rebuildDisplay()
   }
 
   function fileRows() {
@@ -1947,6 +2082,7 @@ Item {
   }
 
   readonly property string emptyMessage: {
+    if (root.inEmojiView && emojiSource.failed) return "No emoji data at " + emojiSource.path
     if (root.inClipboardView && clipboardSource.history.length === 0) return "Clipboard history is empty"
     if (root.inFileView) {
       if (!root.filterText.trim()) return "Type a file name, or a path like ~/Documents/"
@@ -2210,6 +2346,7 @@ Item {
 
           ListView {
             id: resultList
+            visible: !root.inEmojiView
             anchors.left: parent.left
             anchors.top: parent.top
             anchors.bottom: parent.bottom
@@ -2243,9 +2380,28 @@ Item {
             }
           }
 
+          EmojiGrid {
+            id: emojiGrid
+            visible: root.inEmojiView
+            anchors.fill: parent
+            appearance: menuAppearance
+            launcher: menuState
+            onPointerMoved: function(index, item, mouse) {
+              root.hoverFromPointer(index, item, mouse)
+            }
+            onPointerLeft: function(index) {
+              root.clearHover(index)
+            }
+            onActivated: function(index) {
+              root.cursorActive = true
+              root.selectedIndex = index
+              root.activateIndex(index, true)
+            }
+          }
+
           ScrollFades {
-            anchors.fill: resultList
-            list: resultList
+            anchors.fill: root.inEmojiView ? emojiGrid : resultList
+            list: root.inEmojiView ? emojiGrid : resultList
             background: root.background
           }
 

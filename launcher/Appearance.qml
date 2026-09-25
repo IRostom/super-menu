@@ -79,7 +79,8 @@ QtObject {
     apps: "blue", learn: "yellow", trigger: "orange", style: "magenta",
     setup: "blue", install: "green", remove: "red", update: "cyan",
     about: "cyan", system: "red",
-    "clipboard-history": "green", clip: "green", "file-search": "yellow", file: "yellow"
+    "clipboard-history": "green", clip: "green", "file-search": "yellow", file: "yellow",
+    emoji: "orange"
   })
   property var palette: ({})
 

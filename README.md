@@ -47,6 +47,8 @@ omarchy plugin update io.github.irostom.super-menu
 - `wl-copy` (wl-clipboard) for copying results.
 - `fd` for Search Files.
 - The first-party `omarchy.clipboard` plugin enabled, for Clipboard History.
+- The first-party `omarchy.emojis` plugin's data file, for Search Emojis. It
+  only has to be installed, not enabled.
 
 All of these ship with Omarchy. Without `qalc` the calculator stays silent,
 and everything else keeps working.
@@ -67,7 +69,7 @@ only other file it writes is `omarchy.clipboard`'s history, and only when you
 remove an entry. Delete these paths too for a clean removal:
 
 - `$XDG_STATE_HOME/omarchy/menu-history.json`: your Favorites and recent
-  launches.
+  launches, and your pinned and recent emojis.
 - `$XDG_STATE_HOME/omarchy/menu-qalc/`: the calculator's private `qalc`
   config.
 
@@ -119,20 +121,22 @@ Enter to run, Esc or Ctrl+B to close. The actions are defined in
 | Answer | Copy (or Run, if the plugin gives an action) |
 | Clipboard entry | Paste, Copy to Clipboard, Open, Show Details, Remove from History |
 | File | Open, Show in Folder, Show Details, Copy Path, Copy File |
+| Emoji | Paste, Copy, Pin/Unpin, Copy Name, Copy Unicode Codepoint, Remove from Recently Used |
 | Any row in Suggestions | also Remove from Suggestions |
 
-## Clipboard History and Search Files
+## Clipboard History, Search Files and Search Emojis
 
-Two rows at the root open views of their own, the way vicinae's commands do.
+Three rows at the root open views of their own, the way vicinae's commands do.
 The query filters inside the view, and a detail pane shows the selected
 entry beside the list. Ctrl+D hides or shows it. Backspace on an empty query
 goes back to the root.
 
-Either view can be opened directly, for a keybinding of its own:
+Any view can be opened directly, for a keybinding of its own:
 
 ```bash
 omarchy-shell shell toggle io.github.irostom.super-menu '{"menu":"clipboard-history"}'
 omarchy-shell shell toggle io.github.irostom.super-menu '{"menu":"file-search"}'
+omarchy-shell shell toggle io.github.irostom.super-menu '{"menu":"emoji"}'
 ```
 
 To rename, re-icon, hide or move a view, name its id in
@@ -164,6 +168,33 @@ it. Keys in this view:
 - Ctrl+O shows it in Nautilus.
 - Ctrl+Shift+C copies the path.
 - Ctrl+Alt+C copies the file itself, as a `text/uri-list`.
+
+**Search Emojis** is Omarchy's emoji picker inside the launcher, laid out
+like vicinae's: a grid with Pinned and Recently Used first, then a section
+per category. The emojis and their keywords come from `omarchy.emojis`' own
+`emojis.json`, read in place, so the list follows Omarchy's releases. Every
+word you type has to match a keyword, and whole keywords rank above partial
+ones. The footer names the selected emoji. Keys in this view:
+
+- The arrow keys move through the grid. Page Up and Page Down move a screen at a time.
+- Enter pastes the emoji into the window that had focus, through Omarchy's
+  `omarchy-menu-emoji-insert`.
+- Ctrl+Shift+C only copies it.
+- Ctrl+Shift+P pins it to the top, or unpins it.
+- Ctrl+Alt+C copies its Unicode codepoint.
+- Delete removes it from Recently Used.
+
+To open it with Omarchy's emoji keybinding instead of the standalone picker,
+rebind it in `~/.config/hypr/bindings.lua`:
+
+```lua
+hl.unbind("SUPER + CTRL + E")
+o.bind("SUPER + CTRL + E", "Emojis", "omarchy-shell shell toggle io.github.irostom.super-menu '{\"menu\":\"emoji\"}'")
+```
+
+At the root, a query that starts with `:` answers with emojis instead:
+`:fire` lists 🔥 and its neighbours as answer rows. Enter pastes the first one,
+and Ctrl+Shift+C copies it. Plain words never bring up emojis.
 
 ### Quick access and details
 
@@ -353,15 +384,16 @@ qalc -e -t 1
 | File | Role |
 |---|---|
 | `Menu.qml` | Menu logic, cloned from `omarchy.menu`: IPC, menu tree, providers, dmenu, query plugins, layout sizing. Query-plugin hooks are marked in the source. |
-| `launcher/` | The menu's view: `Appearance.qml` (visual tokens, window size), `LauncherState.qml` (state the views read), `SearchBar.qml`, `ListRow.qml` + `IconTile.qml`, `SectionHeader.qml`, `Footer.qml` + `FooterButton.qml`, `ActionPanel.qml`, `Keycaps.qml`, `AnswerCard.qml` + `Badge.qml`, `LoadingBar.qml`, `DetailPane.qml`, scroll fades and empty state. `Menu.qml` aliases the tokens and state under their old names. |
+| `launcher/` | The menu's view: `Appearance.qml` (visual tokens, window size), `LauncherState.qml` (state the views read), `SearchBar.qml`, `ListRow.qml` + `IconTile.qml`, `SectionHeader.qml`, `Footer.qml` + `FooterButton.qml`, `ActionPanel.qml`, `Keycaps.qml`, `AnswerCard.qml` + `Badge.qml`, `LoadingBar.qml`, `DetailPane.qml`, `EmojiGrid.qml`, scroll fades and empty state. `Menu.qml` aliases the tokens and state under their old names. |
 | `MenuModel.js` | Cloned model helpers, plus the `copyText`/`actionArgv` roles. |
 | `QueryPlugins.js` | Registry, trigger gate, row normalization, JS compilation. |
 | `QueryBuiltins.js` | Descriptors for the shipped plugins. |
 | `Actions.js` | What each kind of row can do, their shortcuts and keycaps. |
 | `Sections.js` | Section labels for the list: root, search, answers. |
-| `MenuHistory.qml` | Favorites and recent launches, stored in `$XDG_STATE_HOME/omarchy/menu-history.json`. |
+| `MenuHistory.qml` | Favorites and recent launches, and pinned and recent emojis, stored in `$XDG_STATE_HOME/omarchy/menu-history.json`. |
 | `ClipboardSource.qml` | Reads `omarchy.clipboard`'s history file for the Clipboard History view. |
 | `FileSearch.js` | Search Files: path detection, the `fd` command line, ranking. |
+| `EmojiSource.qml`, `EmojiSearch.js` | Search Emojis: reads `omarchy.emojis`' data, infers categories, ranks, lays out the grid. |
 | `query-plugins/calc.sh` | The calculator/converter. |
 | `AppLibrary.qml`, `AppSearch.js` | Verbatim copies of the shell's own — see below. |
 | `ClipboardHistory.js` | Verbatim copy of `omarchy.clipboard`'s history model, so both parse the file the same way. |

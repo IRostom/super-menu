@@ -9,7 +9,9 @@ Item {
   required property string section
   required property Appearance appearance
 
-  width: ListView.view.width
+  // Inside the emoji grid it is a line's child, not the delegate itself, and
+  // has no ListView attached.
+  width: ListView.view ? ListView.view.width : (parent ? parent.width : 0)
   height: section ? appearance.sectionHeaderHeight : 0
   visible: section.length > 0
 
