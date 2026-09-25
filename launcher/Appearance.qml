@@ -78,7 +78,8 @@ QtObject {
   readonly property var groupHues: ({
     apps: "blue", learn: "yellow", trigger: "orange", style: "magenta",
     setup: "blue", install: "green", remove: "red", update: "cyan",
-    about: "cyan", system: "red"
+    about: "cyan", system: "red",
+    "clipboard-history": "green", clip: "green", "file-search": "yellow", file: "yellow"
   })
   property var palette: ({})
 

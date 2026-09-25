@@ -10,6 +10,7 @@ import "QueryPlugins.js" as QueryPlugins
 import "QueryBuiltins.js" as QueryBuiltins
 import "Sections.js" as Sections
 import "Actions.js" as Actions
+import "FileSearch.js" as FileSearch
 import "launcher"
 
 Item {
@@ -72,7 +73,9 @@ Item {
       pluginDir: root.pluginDir,
       plugins: ids,
       query: query,
-      matches: matched
+      matches: matched,
+      clipboardEntries: clipboardSource.history.length,
+      fileSearchArgv: FileSearch.argvFor(query, root.homeDir)
     })
   }
 
@@ -163,6 +166,8 @@ Item {
     closingSoon = false
     toastTimer.stop()
     toastText = ""
+    fileDebounce.stop()
+    if (fileSearchProc.running) fileSearchProc.signal(9)
   }
   // Visual tokens and view-facing state live in launcher/. The aliases keep
   // the logic below reading and writing them under their old names.
@@ -306,6 +311,7 @@ Item {
   // re-declaring the whole row).
   function rebuildItemsFromSources() {
     var mergedMenu = MenuModel.mergeMenuSources(root.defaultMenuItems, root.userMenuItems)
+    mergedMenu = MenuModel.insertItems(mergedMenu.items, mergedMenu.itemOrder, root.viewItems(), "apps")
     root.providerRevision += 1
     root.providersLoaded = ({})
     root.providerQueue = []
@@ -477,6 +483,8 @@ Item {
   function loadProviderForMenu(id) {
     var entry = root.item(id)
     if (!entry || !entry.provider || root.providersLoaded[id]) return
+    // The clipboard and file views fill themselves; see rebuildDisplay().
+    if (root.isViewId(id)) return
 
     // Native providers don't touch providerProc, so they never need to queue.
     if (entry.provider === "apps") {
@@ -606,6 +614,10 @@ Item {
         question: "",
         questionLabel: "",
         answerLabel: "",
+        filePath: "",
+        previewImage: "",
+        mime: "",
+        historyIndex: -1,
         provider: "",
         score: i,
         section: ""
@@ -673,7 +685,9 @@ Item {
     var rows = []
     var query = root.filterText.trim()
 
-    if (query) {
+    if (root.inView) {
+      rows = root.inClipboardView ? root.clipboardRows(query) : root.fileRows()
+    } else if (query) {
       var currentRows = []
       var drilldownRows = []
 
@@ -792,7 +806,7 @@ Item {
   // What the selected row can do (Actions.js). The footer shows the first
   // and the action panel lists them all. The arguments are only there so the
   // binding re-evaluates when the rows, the selection or the history change.
-  readonly property var selectedActions: root.actionsForSelection(root.selectedIndex, root.cursorActive, root.layoutSerial, menuHistory.favorites, menuHistory.recents, root.detailVisible)
+  readonly property var selectedActions: root.actionsForSelection(root.selectedIndex, root.cursorActive, root.layoutSerial, menuHistory.favorites, menuHistory.recents, root.detailVisible, root.viewDetailVisible)
 
   function selectedRow() {
     if (!root.cursorActive || root.selectedIndex < 0 || root.selectedIndex >= displayModel.count) return null
@@ -806,7 +820,7 @@ Item {
       isFavorite: menuHistory.isFavorite,
       inSuggestions: row.section === "Suggestions",
       canUninstall: !!root.appLibrary,
-      detailsShown: root.detailVisible
+      detailsShown: root.inView ? root.viewDetailVisible : root.detailVisible
     })
     for (var i = 0; i < list.length; i++) list[i].keycaps = Actions.keycaps(list[i].keys)
     return list
@@ -835,7 +849,18 @@ Item {
     } else if (action.id === "uninstall") {
       root.requestDeleteSelected()
     } else if (action.id === "details") {
-      root.detailVisible = !root.detailVisible
+      if (root.inView) root.viewDetailVisible = !root.viewDetailVisible
+      else root.detailVisible = !root.detailVisible
+    } else if (action.id === "copy-clip") {
+      root.copyClip(row)
+    } else if (action.id === "open-clip") {
+      root.openClip(row)
+    } else if (action.id === "remove") {
+      root.requestDeleteSelected()
+    } else if (action.id === "reveal") {
+      root.revealFile(row)
+    } else if (action.id === "copy-file") {
+      root.copyFile(row)
     }
   }
 
@@ -871,9 +896,13 @@ Item {
   // the copy happened, so the launcher stays up long enough to read it.
   function copyAndClose(text, shown) {
     root.copyText(text)
-    var label = String(shown || text || "")
-    if (label.length > 40) label = label.substring(0, 39) + "…"
-    root.showToast("Copied " + label)
+    root.toastAndClose("Copied " + String(shown || text || ""))
+  }
+
+  function toastAndClose(message) {
+    var text = String(message || "")
+    if (text.length > 47) text = text.substring(0, 46) + "…"
+    root.showToast(text)
     root.closingSoon = true
     closeAfterToast.restart()
   }
@@ -907,31 +936,101 @@ Item {
     root.filterText = ""
   }
 
-  // --- app details -----------------------------------------------------
-  // The pane shows while it is switched on and the selected row is an app;
-  // other rows get the full width back.
-  readonly property var selectedAppDetails: root.appDetails(root.selectedIndex, root.cursorActive, root.layoutSerial)
-  readonly property bool detailShown: root.detailVisible && !root.dmenuActive && root.selectedAppDetails !== null
+  // --- details -----------------------------------------------------------
+  // The pane beside the list: an app's desktop entry, a clipboard entry's
+  // content, a file's preview. It shows while it is switched on and the
+  // selected row has details; other rows get the full width back. The
+  // clipboard and file views have their own switch, on by default.
+  readonly property var selectedDetails: root.detailsFor(root.selectedIndex, root.cursorActive, root.layoutSerial, clipboardSource.history)
+  readonly property bool detailShown: !root.dmenuActive && root.selectedDetails !== null
+    && (root.inView ? root.viewDetailVisible : root.detailVisible)
 
-  function appDetails() {
+  // { name, subtitle, comment, iconSource, glyph, hueId, previewImage,
+  //   previewText, fields: [{ label, value }] }
+  function detailsFor() {
     var row = root.selectedRow()
-    if (!row || row.kind !== "app") return null
+    if (!row) return null
+    if (row.kind === "app") return root.appDetails(row)
+    if (row.kind === "clip") return root.clipDetails(row)
+    if (row.kind === "file") return root.fileDetails(row)
+    return null
+  }
+
+  function details(fields) {
+    var d = { name: "", subtitle: "", comment: "", iconSource: "", glyph: "", hueId: "",
+      previewImage: "", previewText: "", fields: [] }
+    for (var k in fields) d[k] = fields[k]
+    return d
+  }
+
+  function appDetails(row) {
     var entry = DesktopEntries.byId(row.appId)
     if (!entry) return null
     var join = function(list) {
       try { return list && list.length ? Array.prototype.slice.call(list).join(", ") : "" } catch (e) { return "" }
     }
-    return {
+    var fields = []
+    var command = String(entry.execString || "")
+    if (command) fields.push({ label: "Command", value: command })
+    if (join(entry.categories)) fields.push({ label: "Categories", value: join(entry.categories) })
+    if (join(entry.keywords)) fields.push({ label: "Keywords", value: join(entry.keywords) })
+    fields.push({ label: "Desktop ID", value: row.appId })
+    if (entry.runInTerminal) fields.push({ label: "Runs in", value: "Terminal" })
+    return root.details({
       name: row.label,
-      genericName: String(entry.genericName || ""),
+      subtitle: String(entry.genericName || ""),
       comment: String(entry.comment || ""),
       iconSource: root.appLibrary ? root.appLibrary.iconSource(row.appIcon) : "",
-      command: String(entry.execString || ""),
-      categories: join(entry.categories),
-      keywords: join(entry.keywords),
-      desktopId: row.appId,
-      terminal: !!entry.runInTerminal
+      fields: fields
+    })
+  }
+
+  function clipDetails(row) {
+    var entry = clipboardSource.entry(row.historyIndex)
+    if (!entry) return null
+
+    if (entry.type === "image") {
+      var fields = [{ label: "Type", value: "Image (" + String(entry.mime || "").replace("image/", "") + ")" }]
+      if (entry.capturedAt) fields.push({ label: "Copied", value: entry.capturedAt })
+      fields.push({ label: "Stored at", value: FileSearch.compressHome(entry.path, root.homeDir) })
+      return root.details({ previewImage: row.previewImage, fields: fields })
     }
+
+    var text = String(entry.text || "")
+    if (row.detail === "File") {
+      return root.details({
+        previewImage: row.previewImage,
+        previewText: row.previewImage ? "" : text.replace(/file:\/\//g, ""),
+        fields: [{ label: "Type", value: "File" }]
+      })
+    }
+
+    var size = root.textSize(text)
+    return root.details({
+      previewText: text.substring(0, 4000),
+      fields: [
+        { label: "Type", value: "Text" },
+        { label: "Characters", value: String(size.chars) },
+        { label: "Lines", value: size.lines + (size.more ? "+" : "") }
+      ]
+    })
+  }
+
+  function fileDetails(row) {
+    var dir = row.mime === "inode/directory"
+    var name = row.label
+    var dot = name.lastIndexOf(".")
+    var kind = dir ? "Folder" : (dot > 0 ? name.substring(dot + 1).toUpperCase() + " file" : "File")
+    return root.details({
+      name: name,
+      glyph: row.icon,
+      hueId: row.itemId,
+      previewImage: row.previewImage,
+      fields: [
+        { label: "Where", value: FileSearch.compressHome(FileSearch.parentDir(row.filePath), root.homeDir) },
+        { label: "Kind", value: kind }
+      ]
+    })
   }
 
   // --- quick access ------------------------------------------------------
@@ -1011,11 +1110,14 @@ Item {
     // Delete keeps its own rule below: it edits the query until the text
     // cursor reaches the end.
     var shortcut = Actions.forShortcut(root.selectedActions, event)
-    if (shortcut && shortcut.id !== "uninstall") {
+    if (shortcut && shortcut.keys !== "delete") {
       root.runRowAction(shortcut)
       return true
     }
 
+    if (root.inFileView && (key === Qt.Key_Tab || (key === Qt.Key_Right && atEnd))) {
+      if (root.completeFolder(root.selectedRow())) return true
+    }
     if (key === Qt.Key_Tab || key === Qt.Key_Backtab) return true
     if (key === Qt.Key_Delete) {
       if (!atEnd) return false
@@ -1056,6 +1158,11 @@ Item {
     root.cursorActive = root.mode !== "input"
     root.cursorMoved = false
     root.disarmPointer()
+    if (root.inView) {
+      root.scheduleFileSearch()
+      root.rebuildDisplay()
+      return
+    }
     if (!root.dmenuActive && root.filterText.trim()) root.loadProvidersForSearch()
     // Before rebuildDisplay(), so a query that no longer has an answer drops
     // its stale row in the same frame rather than showing a wrong one.
@@ -1070,6 +1177,8 @@ Item {
     root.filterText = ""
     root.selectedIndex = 0
     root.cursorActive = true
+    root.clearAnswers()
+    root.scheduleFileSearch()
     if (fromPointer) pointerGate.allowInitialSample()
     else root.disarmPointer()
     root.rebuildDisplay()
@@ -1112,6 +1221,14 @@ Item {
       root.applyAnswer(row)
       return
     }
+    if (row.kind === "clip") {
+      root.pasteClip(row)
+      return
+    }
+    if (row.kind === "file") {
+      root.openFile(row)
+      return
+    }
     if (row.kind === "menu" || row.kind === "link") {
       root.setActiveMenu(row.target || row.itemId, true, fromPointer)
     } else if (row.kind === "app") {
@@ -1131,8 +1248,10 @@ Item {
   function requestDeleteSelected() {
     if (!root.cursorActive || root.selectedIndex < 0 || root.selectedIndex >= displayModel.count) return
     var row = displayModel.get(root.selectedIndex)
-    if (!row || row.kind !== "app") return
-    root.deleteTarget = { appId: row.appId, label: row.label }
+    if (!row) return
+    if (row.kind === "clip") root.deleteTarget = { kind: "clip", key: clipboardSource.keyAt(row.historyIndex), label: row.label }
+    else if (row.kind === "app") root.deleteTarget = { kind: "app", appId: row.appId, label: row.label }
+    else return
     deleteConfirm.selectedIndex = 1
     root.deleteConfirmOpen = true
   }
@@ -1150,6 +1269,14 @@ Item {
     root.deleteConfirmOpen = false
     root.deleteTarget = null
     if (!target) return
+    if (target.kind === "clip") {
+      // By key: a copy made while the dialog was up has shifted the indexes.
+      clipboardSource.removeKey(target.key)
+      root.showToast("Removed from Clipboard History")
+      root.disarmPointer()
+      Qt.callLater(function() { searchBar.focusInput() })
+      return
+    }
     root.cancel()
     if (root.appLibrary) root.appLibrary.remove(target.appId, target.label)
   }
@@ -1189,6 +1316,7 @@ Item {
     selectedIndex = 0
     cursorActive = true
     root.clearAnswers()
+    root.scheduleFileSearch()
     root.disarmPointer()
     root.evaluateGuards()
     opened = true
@@ -1567,6 +1695,266 @@ Item {
     }
   }
 
+  // ------------------------------------------------------------------
+  // Clipboard History and Search Files
+  //
+  // Two root rows that open views of their own, the way vicinae's commands
+  // do. They are ordinary menu items, so search, Favorites, Back and routes
+  // (`{"menu":"clipboard-history"}`) all work, but their rows come from the
+  // clipboard history file and from fd instead of the menu tree, and the
+  // query goes to them instead of to the query plugins.
+
+  readonly property string clipboardView: "clipboard-history"
+  readonly property string fileView: "file-search"
+  readonly property bool inClipboardView: !root.dmenuActive && root.activeMenu === root.clipboardView
+  readonly property bool inFileView: !root.dmenuActive && root.activeMenu === root.fileView
+  readonly property bool inView: root.inClipboardView || root.inFileView
+  readonly property string homeDir: Quickshell.env("HOME")
+
+  // The views open split, like vicinae's. Ctrl+D there toggles this, not the
+  // app pane's setting.
+  property bool viewDetailVisible: true
+
+  // The last fd run for the file view, [{ path, dir }], and the query it
+  // answers. Kept while the next one runs, so typing does not blank the list.
+  property var fileResults: []
+  property string fileQuery: ""
+  property int fileRevision: 0
+
+  ClipboardSource {
+    id: clipboardSource
+    onHistoryChanged: if (root.opened && root.inClipboardView) root.rebuildDisplay()
+  }
+
+  function viewItems() {
+    return [
+      MenuModel.normalizeItem(root.clipboardView, {
+        parent: "root", label: "Clipboard History", icon: "󰅌", provider: "clipboard",
+        aliases: ["clipboard", "paste", "copied"]
+      }),
+      MenuModel.normalizeItem(root.fileView, {
+        parent: "root", label: "Search Files", icon: "󰍉", provider: "files",
+        aliases: ["files", "find", "file"]
+      })
+    ]
+  }
+
+  function isViewId(id) {
+    return id === root.clipboardView || id === root.fileView
+  }
+
+  // From the full entry, not the capped copy displayRows() hands out.
+  // Characters are exact; lines are counted over a prefix, so a
+  // multi-megabyte paste costs no more than a large one. `more` marks a count
+  // that stopped short.
+  function textSize(text) {
+    var limit = Math.min(text.length, 100000)
+    var lines = 1
+    for (var at = text.indexOf("\n"); at >= 0 && at < limit; at = text.indexOf("\n", at + 1)) lines++
+    return { chars: text.length, lines: lines, more: limit < text.length }
+  }
+
+  function clipboardRows(query) {
+    var entries = clipboardSource.displayRows(query)
+    var rows = []
+    for (var i = 0; i < entries.length; i++) {
+      var e = entries[i]
+      var detail = ""
+      if (e.entryType === "image") detail = "Image"
+      else if (e.entryType === "file") detail = "File"
+      else {
+        var entry = clipboardSource.entry(e.index)
+        var size = root.textSize(String(entry ? entry.text : e.fullText))
+        detail = size.lines > 1 ? size.lines + (size.more ? "+" : "") + " lines" : size.chars + " characters"
+      }
+      rows.push(MenuModel.viewRow({
+        itemId: "clip." + e.index,
+        kind: "clip",
+        icon: e.entryType === "image" ? "󰋩" : (e.entryType === "file" ? "󰈔" : "󰅍"),
+        // One line is all a row shows; the pane has the rest.
+        label: e.previewText.trim().substring(0, 300),
+        detail: detail,
+        previewImage: e.previewImage ? Util.fileUrl(e.previewImage) : "",
+        filePath: e.path,
+        mime: e.mime,
+        historyIndex: e.index
+      }))
+    }
+    return rows
+  }
+
+  function fileRows() {
+    var listing = FileSearch.isPathQuery(root.fileQuery)
+    var rows = []
+    for (var i = 0; i < root.fileResults.length; i++) {
+      var r = root.fileResults[i]
+      var image = !r.dir && FileSearch.isImagePath(r.path)
+      rows.push(MenuModel.viewRow({
+        itemId: "file." + r.path,
+        kind: "file",
+        icon: r.dir ? "󰉋" : (image ? "󰋩" : "󰈔"),
+        label: FileSearch.baseName(r.path) || r.path,
+        // A listing's folder is already in its section header.
+        detail: listing ? "" : FileSearch.compressHome(FileSearch.parentDir(r.path), root.homeDir),
+        previewImage: image ? Util.fileUrl(r.path) : "",
+        filePath: r.path,
+        mime: r.dir ? "inode/directory" : ""
+      }))
+    }
+    var dir = FileSearch.pathQueryParts(root.fileQuery, root.homeDir).dir
+    return Sections.labelled(rows, listing ? FileSearch.compressHome(dir, root.homeDir) : "Results")
+  }
+
+  // Every keystroke drops the run in flight; the next one starts once typing
+  // pauses.
+  function scheduleFileSearch() {
+    root.fileRevision += 1
+    fileDebounce.stop()
+    if (fileSearchProc.running) fileSearchProc.signal(9)
+
+    if (!root.inFileView || !root.filterText.trim()) {
+      root.fileResults = []
+      root.fileQuery = ""
+      return
+    }
+    fileDebounce.restart()
+  }
+
+  function runFileSearch() {
+    // A killed run may not have exited yet, and Process ignores a new command
+    // while it is running. Start again once it has.
+    if (fileSearchProc.running) {
+      fileSearchProc.rerun = true
+      fileSearchProc.signal(9)
+      return
+    }
+    var query = root.filterText.trim()
+    var argv = FileSearch.argvFor(query, root.homeDir)
+    if (!root.inFileView || argv.length === 0) return
+
+    fileSearchProc.revision = root.fileRevision
+    fileSearchProc.query = query
+    fileSearchProc.command = argv
+    fileSearchProc.running = true
+  }
+
+  function deliverFiles(query, status, text) {
+    if (!root.opened || !root.inFileView) return
+    // fd exits 1 when it could not read some directory, and still prints
+    // everything it found. Only a killed run is thrown away.
+    if (status !== 0) return
+    root.fileResults = FileSearch.results(text, query, root.homeDir)
+    root.fileQuery = query
+    root.rebuildDisplay()
+  }
+
+  Timer {
+    id: fileDebounce
+    interval: 120
+    repeat: false
+    onTriggered: root.runFileSearch()
+  }
+
+  Process {
+    id: fileSearchProc
+    property int revision: 0
+    property string query: ""
+    property bool rerun: false
+    stdout: StdioCollector { id: fileSearchOut; waitForEnd: true }
+    onStarted: fileWatchdog.restart()
+    onExited: function(exitCode, exitStatus) {
+      fileWatchdog.stop()
+      if (fileSearchProc.rerun) {
+        fileSearchProc.rerun = false
+        Qt.callLater(root.runFileSearch)
+        return
+      }
+      if (fileSearchProc.revision === root.fileRevision)
+        root.deliverFiles(fileSearchProc.query, exitStatus, fileSearchOut.text)
+    }
+  }
+
+  // A walk that runs this long is into something huge (a network mount);
+  // keep what the last run found rather than wait on it.
+  Timer {
+    id: fileWatchdog
+    interval: 1500
+    repeat: false
+    onTriggered: if (fileSearchProc.running) fileSearchProc.signal(9)
+  }
+
+  function closeNow() {
+    root.applySerial = root.requestSerial
+    root.opened = false
+    root.filterText = ""
+  }
+
+  // Enter on a clipboard entry pastes it into the window that had focus, the
+  // way omarchy.clipboard does; the helpers read the entry back by index so a
+  // huge paste never passes through here. They sleep before pressing
+  // Shift+Insert, which is time enough for the launcher to let go of focus.
+  function clipCommand(row, copyOnly) {
+    var bin = root.omarchyPath + "/bin/"
+    if (row.mime.indexOf("image/") === 0 && row.filePath) {
+      return [bin + "omarchy-clipboard-paste-file"].concat(copyOnly ? ["--copy-only"] : [], [row.mime, row.filePath])
+    }
+    return [bin + "omarchy-clipboard-paste-text", copyOnly ? "--copy-only" : "--shift-insert", "--history-index", String(row.historyIndex)]
+  }
+
+  function pasteClip(row) {
+    var argv = root.clipCommand(row, false)
+    root.closeNow()
+    Quickshell.execDetached(argv)
+  }
+
+  function copyClip(row) {
+    Quickshell.execDetached(root.clipCommand(row, true))
+    root.toastAndClose("Copied " + row.label)
+  }
+
+  // A URL goes to the browser, an image to the editor, text to $EDITOR.
+  function openClip(row) {
+    var argv = [root.omarchyPath + "/bin/omarchy-clipboard-open", "--history-index", String(row.historyIndex)]
+    root.closeNow()
+    Quickshell.execDetached(argv)
+  }
+
+  function openFile(row) {
+    var path = row.filePath
+    root.closeNow()
+    Quickshell.execDetached(["xdg-open", path])
+  }
+
+  function revealFile(row) {
+    var path = row.filePath
+    root.closeNow()
+    Quickshell.execDetached(["bash", "-c",
+      'if command -v nautilus >/dev/null; then exec nautilus --select "$1"; else exec xdg-open "$(dirname "$1")"; fi',
+      "bash", path])
+  }
+
+  // As a file, not its path: pasting into a file manager or a chat copies it.
+  function copyFile(row) {
+    Quickshell.execDetached(["wl-copy", "--type", "text/uri-list", Util.fileUrl(row.filePath)])
+    root.toastAndClose("Copied " + row.label)
+  }
+
+  // Tab, or → at the end of the query, on a folder: list what is inside it.
+  function completeFolder(row) {
+    if (!row || row.kind !== "file" || row.mime !== "inode/directory") return false
+    root.setFilter(FileSearch.compressHome(row.filePath, root.homeDir) + "/")
+    return true
+  }
+
+  readonly property string emptyMessage: {
+    if (root.inClipboardView && clipboardSource.history.length === 0) return "Clipboard history is empty"
+    if (root.inFileView) {
+      if (!root.filterText.trim()) return "Type a file name, or a path like ~/Documents/"
+      if (fileDebounce.running || fileSearchProc.running) return "Searching…"
+    }
+    return ""
+  }
+
   Process {
     id: clipProc
     property string payload: ""
@@ -1762,8 +2150,10 @@ Item {
           anchors.fill: parent
           opened: root.deleteConfirmOpen
           z: 10
-          message: "Do you want to uninstall " + ((root.deleteTarget && root.deleteTarget.label) || "") + "?"
-          confirmText: "Uninstall"
+          message: (root.deleteTarget && root.deleteTarget.kind === "clip")
+            ? "Remove this entry from clipboard history?"
+            : "Do you want to uninstall " + ((root.deleteTarget && root.deleteTarget.label) || "") + "?"
+          confirmText: (root.deleteTarget && root.deleteTarget.kind === "clip") ? "Remove" : "Uninstall"
           background: root.background
           foreground: root.foreground
           scrim: root.scrim
@@ -1805,7 +2195,7 @@ Item {
           height: Style.spacing.hairline
           visible: root.mode !== "input"
           appearance: menuAppearance
-          loading: providerProc.running || answerProc.running
+          loading: providerProc.running || answerProc.running || fileSearchProc.running
         }
 
         Item {
@@ -1873,7 +2263,7 @@ Item {
             width: parent.width - x
             height: parent.height
             appearance: menuAppearance
-            details: root.selectedAppDetails
+            details: root.selectedDetails
           }
 
           EmptyState {
@@ -1881,6 +2271,7 @@ Item {
             visible: displayModel.count === 0 && root.mode !== "input"
             appearance: menuAppearance
             filterText: root.filterText
+            message: root.emptyMessage
           }
         }
 

@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "io.github.irostom.super-menu",
   "name": "Super Menu",
-  "version": "2.0.0",
+  "version": "2.1.0",
   "author": "Islam Rostom",
   "license": "MIT",
   "description": "A Raycast-style replacement for the Omarchy menu that answers what you type: calculator, unit and currency conversion, favorites, recents, an action panel, and user-written query plugins",

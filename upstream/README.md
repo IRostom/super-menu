@@ -11,6 +11,10 @@ that local changes can be merged forward with a 3-way diff when Omarchy updates.
 rather than the menu plugin folder; the root README explains why this plugin
 carries its own copies.
 
+`ClipboardHistory.js` comes from `$OMARCHY_PATH/shell/plugins/clipboard/`
+(omarchy 4.0.4-1). Super Menu reads that plugin's history file, so it parses
+it with the plugin's own model.
+
 To merge a newer upstream:
 
     U=/usr/share/omarchy/shell/plugins/menu

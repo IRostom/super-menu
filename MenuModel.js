@@ -132,6 +132,52 @@ function mergeAppRows(items, itemOrder, appRows) {
   return { items: nextItems, itemOrder: nextOrder }
 }
 
+// Adds items the launcher defines itself (the clipboard and file views) to a
+// merged tree, right after `afterId` or at the top of its parent.
+//
+// The JSONC may name the same id to restyle or move one: `"clipboard-history":
+// {"label": "Clips"}`. That entry has been through normalizeItem(), which
+// fills every field it did not set with "" or [], so only the fields it
+// actually set are laid over ours. `provider` and `kind` always stay ours:
+// they are what makes the item a view, and without them it would be an empty
+// menu that isVisible() hides.
+function insertItems(items, itemOrder, entries, afterId) {
+  var nextItems = ({})
+  for (var k in items) nextItems[k] = items[k]
+  var nextOrder = itemOrder.slice()
+
+  var at = nextOrder.indexOf(afterId)
+  at = at >= 0 ? at + 1 : Math.min(1, nextOrder.length)
+  for (var i = 0; i < entries.length; i++) {
+    var entry = entries[i]
+    if (!entry || !entry.id) continue
+
+    var existing = nextItems[entry.id]
+    if (existing) {
+      var merged = ({})
+      for (var f in entry) merged[f] = entry[f]
+      for (var g in existing) {
+        var value = existing[g]
+        if (g === "provider" || g === "kind" || g === "order") continue
+        // normalizeItem() labels an item with its id when it has no label.
+        if (g === "label" && value === entry.id) continue
+        if (value === "" || value === undefined || value === null) continue
+        if (Array.isArray(value) && value.length === 0) continue
+        merged[g] = value
+      }
+      nextItems[entry.id] = merged
+      continue
+    }
+
+    nextItems[entry.id] = entry
+    nextOrder.splice(at, 0, entry.id)
+    at += 1
+  }
+
+  for (var j = 0; j < nextOrder.length; j++) nextItems[nextOrder[j]].order = j
+  return { items: nextItems, itemOrder: nextOrder }
+}
+
 // Swaps the rows one provider contributed, leaving every other item untouched.
 // Rows carry the id of the submenu that produced them, so a provider that runs
 // again drops its previous batch — a plugin that was just enabled disappears
@@ -374,10 +420,29 @@ function displayRow(items, itemOrder, checkedResults, entry, detail, score, sect
     question: "",
     questionLabel: "",
     answerLabel: "",
+    // Clipboard and file rows carry these four.
+    filePath: "",
+    previewImage: "",
+    mime: "",
+    historyIndex: -1,
     provider: entry.provider || "",
     score: score || 0,
     section: section || ""
   }
+}
+
+// A row for a view that lists something other than menu items: clipboard
+// entries, files. Same key set as displayRow(); `fields` fills in the rest.
+function viewRow(fields) {
+  var row = {
+    itemId: "", kind: "", icon: "", iconFont: "", appIcon: "", appId: "",
+    label: "", target: "", detail: "", path: "", childCount: 0, action: "",
+    actionArgv: "", copyText: "", question: "", questionLabel: "", answerLabel: "",
+    filePath: "", previewImage: "", mime: "", historyIndex: -1,
+    provider: "", score: 0, section: ""
+  }
+  for (var k in fields) row[k] = fields[k]
+  return row
 }
 
 // Commands a `checked:` expression reads a value out of. Every sibling row
@@ -495,6 +560,7 @@ if (typeof module !== "undefined") {
     parseMenuJsonc: parseMenuJsonc,
     mergeMenuSources: mergeMenuSources,
     mergeAppRows: mergeAppRows,
+    insertItems: insertItems,
     swapProviderRows: swapProviderRows,
     item: item,
     resolveRoute: resolveRoute,
@@ -513,6 +579,7 @@ if (typeof module !== "undefined") {
     descriptionTextMatches: descriptionTextMatches,
     matchesQuery: matchesQuery,
     searchScore: searchScore,
-    displayRow: displayRow
+    displayRow: displayRow,
+    viewRow: viewRow
   }
 }

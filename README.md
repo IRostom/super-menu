@@ -45,9 +45,11 @@ omarchy plugin update io.github.irostom.super-menu
 - Omarchy Quattro (4.x) with the Quickshell-based Omarchy shell.
 - `qalc` (libqalculate) for the built-in calculator and converter.
 - `wl-copy` (wl-clipboard) for copying results.
+- `fd` for Search Files.
+- The first-party `omarchy.clipboard` plugin enabled, for Clipboard History.
 
-Both ship with Omarchy. Without `qalc` the calculator stays silent, and
-everything else keeps working.
+All of these ship with Omarchy. Without `qalc` the calculator stays silent,
+and everything else keeps working.
 
 ## Remove
 
@@ -60,8 +62,9 @@ Removing it disables Super Menu first, which switches the built-in
 Menu installed but go back to the stock menu, use
 `omarchy plugin disable io.github.irostom.super-menu` instead.
 
-Super Menu writes only to these paths, all outside `~/.config`. Delete them
-too for a clean removal:
+Super Menu keeps its own state in these paths, all outside `~/.config`. The
+only other file it writes is `omarchy.clipboard`'s history, and only when you
+remove an entry. Delete these paths too for a clean removal:
 
 - `$XDG_STATE_HOME/omarchy/menu-history.json`: your Favorites and recent
   launches.
@@ -114,7 +117,53 @@ Enter to run, Esc or Ctrl+B to close. The actions are defined in
 | Command | Run, Add to Favorites, Copy Command |
 | Menu | Open, Add to Favorites |
 | Answer | Copy (or Run, if the plugin gives an action) |
+| Clipboard entry | Paste, Copy to Clipboard, Open, Show Details, Remove from History |
+| File | Open, Show in Folder, Show Details, Copy Path, Copy File |
 | Any row in Suggestions | also Remove from Suggestions |
+
+## Clipboard History and Search Files
+
+Two rows at the root open views of their own, the way vicinae's commands do.
+The query filters inside the view, and a detail pane shows the selected
+entry beside the list. Ctrl+D hides or shows it. Backspace on an empty query
+goes back to the root.
+
+Either view can be opened directly, for a keybinding of its own:
+
+```bash
+omarchy-shell shell toggle io.github.irostom.super-menu '{"menu":"clipboard-history"}'
+omarchy-shell shell toggle io.github.irostom.super-menu '{"menu":"file-search"}'
+```
+
+To rename, re-icon, hide or move a view, name its id in
+`~/.config/omarchy/extensions/omarchy-menu.jsonc`, for example
+`"clipboard-history": { "label": "Clips" }`. Only the fields you set change.
+
+**Clipboard History** lists what `omarchy.clipboard` captured, newest first,
+from `~/.local/state/omarchy/clipboard-history.json`. Super Menu reads that
+file and runs no capture process of its own. Keys in this view:
+
+- Enter pastes the entry into the window that had focus.
+- Ctrl+Shift+C only copies it.
+- Ctrl+O opens it: a URL in the browser, an image in the editor, text in `$EDITOR`.
+- Delete, with the text cursor at the end of the query, removes the entry
+  after a confirmation.
+
+Pasting, copying and opening all go through Omarchy's own
+`omarchy-clipboard-*` helpers.
+
+**Search Files** runs `fd` over your home folder once you pause typing.
+Hidden and gitignored paths are skipped, and so are dependency and cache
+folders such as `node_modules` and `go/pkg`. Results whose file name matches
+come first, and shallower paths win ties. Every word you type has to appear
+somewhere in the path. A query that starts with `/` or `~/` lists that
+folder instead. Tab, or → at the end of the query, on a folder moves into
+it. Keys in this view:
+
+- Enter opens the file with `xdg-open`.
+- Ctrl+O shows it in Nautilus.
+- Ctrl+Shift+C copies the path.
+- Ctrl+Alt+C copies the file itself, as a `text/uri-list`.
 
 ### Quick access and details
 
@@ -311,8 +360,11 @@ qalc -e -t 1
 | `Actions.js` | What each kind of row can do, their shortcuts and keycaps. |
 | `Sections.js` | Section labels for the list: root, search, answers. |
 | `MenuHistory.qml` | Favorites and recent launches, stored in `$XDG_STATE_HOME/omarchy/menu-history.json`. |
+| `ClipboardSource.qml` | Reads `omarchy.clipboard`'s history file for the Clipboard History view. |
+| `FileSearch.js` | Search Files: path detection, the `fd` command line, ranking. |
 | `query-plugins/calc.sh` | The calculator/converter. |
 | `AppLibrary.qml`, `AppSearch.js` | Verbatim copies of the shell's own — see below. |
+| `ClipboardHistory.js` | Verbatim copy of `omarchy.clipboard`'s history model, so both parse the file the same way. |
 | `examples/` | Sample query plugins. Not loaded; copy them to use them. |
 | `upstream/` | Pristine originals for 3-way merges on Omarchy updates. Reference only; nothing loads them. The original manifest is kept as `manifest.json.orig`, so the repository holds exactly one plugin manifest. |
 

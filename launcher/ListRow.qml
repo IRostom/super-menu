@@ -22,6 +22,8 @@ BorderSurface {
   required property string question
   required property string questionLabel
   required property string answerLabel
+  required property string previewImage
+  required property string mime
 
   required property Appearance appearance
   required property LauncherState launcher
@@ -46,6 +48,7 @@ BorderSurface {
     if (row.kind === "app") return "Application"
     if (row.kind === "menu" || row.kind === "link") return "Menu"
     if (row.kind === "action") return "Command"
+    if (row.kind === "file") return row.mime === "inode/directory" ? "Folder" : "File"
     return ""
   }
 
@@ -64,7 +67,9 @@ BorderSurface {
     anchors.verticalCenter: parent.verticalCenter
     glyph: row.isApp ? "" : row.icon
     glyphFont: row.iconFont
-    imageSource: row.isApp && row.appLibrary ? row.appLibrary.iconSource(row.appIcon) : ""
+    // Apps show their icon; images in the clipboard and in file results show
+    // a thumbnail.
+    imageSource: row.isApp ? (row.appLibrary ? row.appLibrary.iconSource(row.appIcon) : "") : row.previewImage
     hue: row.appearance.hueFor(row.itemId)
   }
 

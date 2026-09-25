@@ -351,6 +351,10 @@ function normalizeRows(rawRows, plugin, match) {
       question: str(r.question),
       questionLabel: str(r.questionLabel),
       answerLabel: str(r.answerLabel),
+      filePath: "",
+      previewImage: "",
+      mime: "",
+      historyIndex: -1,
       provider: plugin.id,
       score: -1,
       section: "answer"

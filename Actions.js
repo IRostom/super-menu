@@ -51,6 +51,7 @@ function keycaps(spec) {
 }
 
 // ctx: { isFavorite(id), inSuggestions, canUninstall, detailsShown }
+// Clipboard and file rows are not menu items, so they cannot be pinned.
 function actionsFor(row, ctx) {
   if (!row) return []
   var list = []
@@ -66,6 +67,23 @@ function actionsFor(row, ctx) {
     if (row.action || row.actionArgv) list.push({ id: "copy", title: "Copy Answer", icon: "󰆏", keys: "ctrl+shift+c", text: row.copyText || row.label })
   }
   else if (row.kind === "dmenu") list.push({ id: "open", title: "Select", icon: "󰄬", keys: "return" })
+  else if (row.kind === "clip") {
+    list.push({ id: "open", title: "Paste", icon: "󰆒", keys: "return" })
+    list.push({ id: "copy-clip", title: "Copy to Clipboard", icon: "󰆏", keys: "ctrl+shift+c" })
+    list.push({ id: "open-clip", title: "Open", icon: "󰏌", keys: "ctrl+o" })
+    list.push({ id: "details", title: ctx.detailsShown ? "Hide Details" : "Show Details", icon: "󰋼", keys: "ctrl+d" })
+    list.push({ id: "remove", title: "Remove from History", icon: "󰆴", keys: "delete", danger: true })
+    return list
+  }
+  else if (row.kind === "file") {
+    var folder = row.mime === "inode/directory"
+    list.push({ id: "open", title: folder ? "Open Folder" : "Open File", icon: "󰏌", keys: "return" })
+    list.push({ id: "reveal", title: "Show in Folder", icon: "󰉋", keys: "ctrl+o" })
+    list.push({ id: "details", title: ctx.detailsShown ? "Hide Details" : "Show Details", icon: "󰋼", keys: "ctrl+d" })
+    list.push({ id: "copy", title: "Copy Path", icon: "󰆏", keys: "ctrl+shift+c", text: row.filePath })
+    list.push({ id: "copy-file", title: "Copy File", icon: "󰈔", keys: "ctrl+alt+c" })
+    return list
+  }
 
   if (pinnable) {
     var pinned = ctx.isFavorite(row.itemId)
